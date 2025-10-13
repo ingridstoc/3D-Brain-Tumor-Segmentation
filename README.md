@@ -91,7 +91,7 @@ The use of transfer learning (VGG16 encoder) combined with 3D convolutional laye
 
 ## Future Work
 
-+ Add more neural networks architectures (ResNet, EfficientNet encoders)
++ Add more neural networks architectures 
 + Implement data augmentation techniques
 + Fine-tune hyperparameters for improved tumor region segmentation
 + Evaluate on additional BraTS datasets for cross-validation
