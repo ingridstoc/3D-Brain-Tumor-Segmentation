@@ -20,10 +20,10 @@ and potentially assist in clinical diagnosis and treatment planning.
 ## Tumor Classification Classes
 The model segments brain tumors into 4 distinct classes:
 
-Class 0: No tumor (healthy tissue)
-Class 1: NCR (Necrotic Tumor Core)
-Class 2: ED (Peritumoral Edematous/Invaded Tissue)
-Class 3: ET (Enhancing Tumor)
+- **Class 0** : No tumor (healthy tissue)
+- **Class 1**: NCR (Necrotic Tumor Core)
+- **Class 2**: ED (Peritumoral Edematous/Invaded Tissue)
+- **Class 3**: ET (Enhancing Tumor)
 
 ## Environment Setup
 
@@ -45,44 +45,44 @@ pip3 install scikit-learn
 ## Implementation Details
 - **Libraries Used**: `PyTorch`, `Numpy`, `Matplotlib`, `Nibabel`, `Scikit-learn`
 - **Data Preprocessing**:
-  +Data Splitting: Training: 70%, Validation: 20%, Testing: 10%
-  +Normalization: Applied Z-score normalization to standardize the intensity values across all MRI scans.
-  +Image Cropping: Reduced the depth dimension from 157 to 144 pixels to: eemove slices without tumor regions, reduce memory consumption, ensure compatibility with VGG16 (dimensions must be divisible by 16)
-  +Data Organization: Organized data into 5 vectors: 4 vectors for each MRI modality (T1, T1ce, T2, FLAIR), 1 vector for ground truth segmentation masks
-  +MRI Modalities
+  + Data Splitting: Training: 70%, Validation: 20%, Testing: 10%
+  + Normalization: Applied Z-score normalization to standardize the intensity values across all MRI scans.
+  + Image Cropping: Reduced the depth dimension from 157 to 144 pixels to: eemove slices without tumor regions, reduce memory consumption, ensure compatibility with VGG16 (dimensions must be divisible by 16)
+  + Data Organization: Organized data into 5 vectors: 4 vectors for each MRI modality (T1, T1ce, T2, FLAIR), 1 vector for ground truth segmentation masks
+  + MRI Modalities
 
-T1: Standard T1-weighted imaging
-T1ce: T1-weighted with contrast enhancement
-T2: T2-weighted imaging
-FLAIR: Fluid-Attenuated Inversion Recovery
+- **T1**: Standard T1-weighted imaging
+- **T1ce**: T1-weighted with contrast enhancement
+- **T2**: T2-weighted imaging
+- **FLAIR**: Fluid-Attenuated Inversion Recovery
 
 ## Model Architecture
 3D U-Net with VGG16 Encoder
 
-Encoder: Pre-trained VGG16 model adapted for 3D inputs
-Decoder: Transpose convolution layers for upsampling
-Convolution Layers: nn.Conv3d for 3D spatial feature extraction
-Normalization: BatchNormalization3D to prevent overfitting and maintain numerical stability
-Activation Functions:
+- **Encoder**: Pre-trained VGG16 model adapted for 3D inputs
+- **Decoder**: Transpose convolution layers for upsampling
+- **Convolution Layers**: nn.Conv3d for 3D spatial feature extraction
+- **Normalization**: BatchNormalization3D to prevent overfitting and maintain numerical stability
+- **Activation Functions**:
 
-ReLU after each BatchNormalization layer
-Softmax at the output layer for pixel-wise classification
++ ReLU after each BatchNormalization layer
++ Softmax at the output layer for pixel-wise classification
 
-
-
-Loss Function
+## Loss Function
 Combined Loss: CrossEntropyLoss + DiceLoss
 
-CrossEntropyLoss: Classifies tumor type for each pixel independently
-DiceLoss: Global metric evaluating overlap between predicted segmentation and ground truth, particularly effective for imbalanced classes
+## Training Configuration
 
-Training Configuration
-
-Optimizer: Adam (typically used for medical image segmentation)
-Evaluation Metrics: Loss value, Dice Score per class
+- **Optimizer**: Adam (typically used for medical image segmentation)
+- **Evaluation Metrics**: Loss value, Dice Score per class
 
 ## Results
 
+| Metric              | Value | 
+|-------------------|----------|
+| Final Loss | 0.2 |
+| Dice Score (No Tumor)      |  100% | 
+| Dice Score (Tumor Regions)          | 70% | 
 
 ## Conclusions
 
@@ -91,7 +91,7 @@ The use of transfer learning (VGG16 encoder) combined with 3D convolutional laye
 
 ## Future Work
 
-Add more neural networks architectures (ResNet, EfficientNet encoders)
-Implement data augmentation techniques
-Fine-tune hyperparameters for improved tumor region segmentation
-Evaluate on additional BraTS datasets for cross-validation
++ Add more neural networks architectures (ResNet, EfficientNet encoders)
++ Implement data augmentation techniques
++ Fine-tune hyperparameters for improved tumor region segmentation
++ Evaluate on additional BraTS datasets for cross-validation
