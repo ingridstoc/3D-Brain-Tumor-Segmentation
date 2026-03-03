@@ -181,7 +181,7 @@ def main():
         1/        <-- raw dataset (downloaded + extracted)
         t1_out/   <-- cropped outputs
     """
-    base_dir = Path(os.environ.get("BASE_DIR", "/cod_licenta")).resolve()
+    base_dir = Path(".").resolve()
     raw_dir = base_dir / "1"
     out_dir = base_dir / "t1_out"
 
