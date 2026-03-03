@@ -6,6 +6,6 @@ BraTS2021_Training_Data.tar
 results
 t1_out
 flattened_2d
-flatten2d.py
 cod_vechi
 .gitignore
+__pycache__
