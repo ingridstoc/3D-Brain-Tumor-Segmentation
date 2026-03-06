@@ -420,7 +420,20 @@ def main(cfg : CFG):
     
     model = build_unet_3d(num_classes=cfg.num_classes)
     model = model.to(cfg.device)
-    optimizer = optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    if cfg.optimizer_name == "adamw":
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay
+    )
+    elif cfg.optimizer_name == "adam":
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay
+    )
+    else:
+        raise ValueError(f"Unknown optimizer: {cfg.optimizer_name}")
     scaler = torch.amp.GradScaler('cuda')
 
     history = {
@@ -478,15 +491,16 @@ def main(cfg : CFG):
     # }
 
 if __name__ == "__main__":
-    cfg = CFG(
-        root="t1_out",  
-        batch_size=1,
-        num_workers=1,
-        epochs=30,
-        lr=1e-3,
-        weight_decay=1e-4,
-        seed=42,
-        include_bg_in_metric=False,   # typical: exclude background in Dice reporting
-        ensemble_temp=1.0,
-    )
+    # cfg = CFG(
+    #     root="t1_out",  
+    #     batch_size=1,
+    #     num_workers=1,
+    #     epochs=30,
+    #     lr=1e-3,
+    #     weight_decay=1e-4,
+    #     seed=42,
+    #     include_bg_in_metric=False,   # typical: exclude background in Dice reporting
+    #     ensemble_temp=1.0,
+    # )
+    cfg = CFG("config.yaml")
     main(cfg)

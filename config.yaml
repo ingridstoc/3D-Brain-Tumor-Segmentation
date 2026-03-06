@@ -1,0 +1,21 @@
+root: "t1_out"
+num_classes: 4
+batch_size: 1
+num_workers: 1
+epochs: 30
+lr: 1e-3
+weight_decay: 1e-4
+seed: 42
+include_bg_in_metric: false
+ensemble_temp: 1.0
+device: "auto"
+loss:
+  name: "dice_ce"
+  lambda_dice: 1.0
+  lambda_ce: 1.0
+  to_onehot_y: true
+  softmax: true
+optimizer:
+  name: "adamw"
+  lr: 0.001
+  weight_decay: 0.0001
