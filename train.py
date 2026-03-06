@@ -189,7 +189,8 @@ def train_one_epoch(
     # pbar = tqdm(train_loader, desc=f"[{modality}] epoch {epoch}/{epochs}")
     start = perf_counter()
     for idx, (img, seg) in enumerate(train_loader):
-        print(f"element {idx}")
+        if idx % 50 == 0 and idx > 0: 
+            print(f"reached {idx} index")
         if idx == len(train_loader) - 1:
             end = perf_counter()
             elapsed_ms = (end - start)
@@ -434,6 +435,14 @@ def main(cfg : CFG):
     )
     else:
         raise ValueError(f"Unknown optimizer: {cfg.optimizer_name}")
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",        # because we monitor val_loss
+        factor=0.5,        # new_lr = lr * 0.5
+        patience=3,        # wait 3 epochs without improvement
+        threshold=1e-4,    # minimum change to count as improvement
+        min_lr=1e-6      # do not reduce below this
+    )
     scaler = torch.amp.GradScaler('cuda')
 
     history = {
@@ -452,7 +461,7 @@ def main(cfg : CFG):
             cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
         )
         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
-
+        scheduler.step(va_loss)
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(va_loss)
         history["train_dice"].append(tr_dice)

@@ -212,38 +212,38 @@ def main():
         sys.exit(2)
 
     # Case dirs are parents of seg files
-    case_dirs = sorted({p.parent for p in nii_segs})
-    print(f"[scan] Found {len(case_dirs)} case folders (via seg files).")
+    # case_dirs = sorted({p.parent for p in nii_segs})
+    # print(f"[scan] Found {len(case_dirs)} case folders (via seg files).")
 
-    # 4) Process each case: load *t1* and *seg* from that folder
-    for i, case_dir in enumerate(case_dirs, 1):
-        case_id = case_dir.name
+    # # 4) Process each case: load *t1* and *seg* from that folder
+    # for i, case_dir in enumerate(case_dirs, 1):
+    #     case_id = case_dir.name
 
-        try:
-            # Prefer exact-ish matching
-            t1_path = next(iter(sorted(case_dir.glob("*t1*.nii*"))))
-            seg_path = next(iter(sorted(case_dir.glob("*seg*.nii*"))))
+    #     try:
+    #         # Prefer exact-ish matching
+    #         t1_path = next(iter(sorted(case_dir.glob("*t1*.nii*"))))
+    #         seg_path = next(iter(sorted(case_dir.glob("*seg*.nii*"))))
 
-            t1 = np.asanyarray(nib.load(str(t1_path)).dataobj).astype(np.float32)
-            seg = np.asanyarray(nib.load(str(seg_path)).dataobj).astype(np.uint8)
+    #         t1 = np.asanyarray(nib.load(str(t1_path)).dataobj).astype(np.float32)
+    #         seg = np.asanyarray(nib.load(str(seg_path)).dataobj).astype(np.uint8)
 
-            process_case(
-                t1=t1,
-                seg=seg,
-                out_dir=out_dir,
-                case_id=case_id,
-                out_shape=out_shape,
-            )
+    #         process_case(
+    #             t1=t1,
+    #             seg=seg,
+    #             out_dir=out_dir,
+    #             case_id=case_id,
+    #             out_shape=out_shape,
+    #         )
 
-            if i % 25 == 0 or i == len(case_dirs):
-                print(f"[{i}/{len(case_dirs)}] processed... latest={case_id}")
+    #         if i % 25 == 0 or i == len(case_dirs):
+    #             print(f"[{i}/{len(case_dirs)}] processed... latest={case_id}")
 
-        except Exception as e:
-            print(f"[warn] Failed {case_id}: {repr(e)}")
+    #     except Exception as e:
+    #         print(f"[warn] Failed {case_id}: {repr(e)}")
 
-    print("[done] Cropping complete.")
-    print(f"[done] Raw dataset: {raw_dir}")
-    print(f"[done] Crops saved:  {out_dir}")
+    # print("[done] Cropping complete.")
+    # print(f"[done] Raw dataset: {raw_dir}")
+    # print(f"[done] Crops saved:  {out_dir}")
 
 
 if __name__ == "__main__":
