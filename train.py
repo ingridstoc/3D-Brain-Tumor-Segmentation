@@ -37,6 +37,16 @@ from monai.networks.nets import UNet
 from dataset import BraTSModalDataset, build_loaders_for_modality
 from utils import seed_everything, CFG
 from time import perf_counter
+from monai.transforms import (
+    Compose,
+    RandFlipd,
+    RandRotate90d,
+    RandAffined,
+    RandScaleIntensityd,
+    RandShiftIntensityd,
+    RandGaussianNoised,
+    RandBiasFieldd,
+)
 
 MODALITIES = ["t1"]
 
@@ -166,41 +176,117 @@ def build_unet_3d(num_classes: int = 4) -> nn.Module:
 # ) -> float:
 #     dice_vec = dice_per_class_from_loader(model, val_loader, device, num_classes=num_classes, include_bg=include_bg)
 #     return torch.nanmean(dice_vec[1:]).item()
+def build_train_augmentations():
+    """
+    Moderate 3D augmentations for BraTS crops.
+    Spatial transforms are applied to both image and label.
+    Intensity transforms are applied only to image.
+    """
+    return Compose([
+        # --- spatial ---
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
 
+        RandRotate90d(
+            keys=["image", "label"],
+            prob=0.3,
+            max_k=3,
+        ),
+
+        RandAffined(
+            keys=["image", "label"],
+            prob=0.2,
+            rotate_range=(0.1, 0.1, 0.1),     # radians, small rotations
+            scale_range=(0.1, 0.1, 0.1),      # ±10%
+            translate_range=(6, 6, 6),        # a few voxels
+            mode=("bilinear", "nearest"),
+            padding_mode="zeros",
+        ),
+
+        # --- intensity: image only ---
+        RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
+        RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
+        RandBiasFieldd(keys=["image"], prob=0.2),
+        RandGaussianNoised(keys=["image"], prob=0.15, std=0.01),
+    ])
+
+def apply_train_augmentations(
+    img: torch.Tensor,
+    seg: torch.Tensor,
+    aug,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    img: [B, 1, H, W, D]
+    seg: [B, H, W, D]
+
+    Returns:
+        aug_img: [B, 1, H, W, D]
+        aug_seg: [B, H, W, D]
+    """
+    aug_imgs = []
+    aug_segs = []
+
+    for b in range(img.shape[0]):
+        sample = {
+            "image": img[b],                 # [1,H,W,D]
+            "label": seg[b].unsqueeze(0),    # [1,H,W,D]
+        }
+
+        sample = aug(sample)
+
+        aug_imgs.append(sample["image"])
+        aug_segs.append(sample["label"].squeeze(0))
+
+    aug_img = torch.stack(aug_imgs, dim=0)
+    aug_seg = torch.stack(aug_segs, dim=0).long()
+
+    return aug_img, aug_seg
 
 def train_one_epoch(
-    cfg : CFG,
+    cfg: CFG,
     model: nn.Module,
     train_loader: DataLoader,
     optimizer,
-    scaler : torch.amp.GradScaler
+    scaler: torch.amp.GradScaler
 ):
     model.train()
     running_loss = 0.0
     dice_sum = 0.0
     dice_count = 0
 
-
     num_plot_classes = cfg.num_classes - 1  # classes 1..3
     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
     eps = 1e-6
 
-    # pbar = tqdm(train_loader, desc=f"[{modality}] epoch {epoch}/{epochs}")
     start = perf_counter()
+
     for idx, (img, seg) in enumerate(train_loader):
-        if idx % 50 == 0 and idx > 0: 
+        if idx % 50 == 0 and idx > 0:
             print(f"reached {idx} index")
         if idx == len(train_loader) - 1:
             end = perf_counter()
-            elapsed_ms = (end - start)
-            print(f"Time taken: {elapsed_ms:.3f}s")
-    
-        img, seg = img.to(cfg.device), seg.to(cfg.device)
+            elapsed_s = (end - start)
+            print(f"Time taken: {elapsed_s:.3f}s")
 
-        optimizer.zero_grad()
-        logits = model(img)
-        loss = cfg.loss_fn(logits, seg.unsqueeze(1))
+        # -------------------------------------------------
+        # apply augmentations on CPU before sending to GPU
+        # img expected shape [B,1,H,W,D]
+        # seg expected shape [B,H,W,D]
+        # -------------------------------------------------
+        if cfg.use_augmentation:
+            img, seg = apply_train_augmentations(img, seg, cfg.train_aug)
+
+        img = img.to(cfg.device, non_blocking=True)
+        seg = seg.to(cfg.device, non_blocking=True)
+
+        optimizer.zero_grad(set_to_none=True)
+
+        with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
+            logits = model(img)
+            loss = cfg.loss_fn(logits, seg.unsqueeze(1))
+
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -208,21 +294,19 @@ def train_one_epoch(
         running_loss += float(loss.item())
         pred = torch.argmax(logits, dim=1)
 
-        # pbar.set_postfix(loss=float(loss.item()))
         for b in range(pred.shape[0]):
             dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
 
             for c in range(cfg.num_classes):
                 if (not cfg.include_bg_in_metric) and c == 0:
                     continue
+
                 p = (pred[b] == c)
                 g = (seg[b] == c)
 
                 inter = (p & g).sum().float()
                 denom = p.sum().float() + g.sum().float()
 
-                # If class absent in BOTH pred and gt, many people ignore it.
-                # We'll ignore by keeping NaN so it doesn't inflate mean.
                 if denom < 1e-6:
                     continue
 
@@ -231,9 +315,8 @@ def train_one_epoch(
             mean_tumor = torch.nanmean(dice_per_class[1:]).item()
             dice_sum += float(mean_tumor)
             dice_count += 1
-            d_cpu = dice_per_class.detach().cpu().double()
 
-            # take only classes 1..3 into a compact vector of length 3
+            d_cpu = dice_per_class.detach().cpu().double()
             d_compact = d_cpu[1:]  # [c1, c2, c3]
             valid = ~torch.isnan(d_compact)
             per_class_sum[valid] += d_compact[valid]
@@ -241,13 +324,95 @@ def train_one_epoch(
 
     train_loss = running_loss / max(1, len(train_loader))
     train_mean_tumor_dice = dice_sum / max(1, dice_count)
-
     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
 
-    print(f"train_loss={train_loss:.4f} \
-          train_mean_tumor_dice={train_mean_tumor_dice:.4f} \
-            train_dice_per_class_mean={train_dice_per_class_mean.tolist()}")
+    print(
+        f"train_loss={train_loss:.4f} "
+        f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
+        f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
+    )
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
+
+# def train_one_epoch(
+#     cfg : CFG,
+#     model: nn.Module,
+#     train_loader: DataLoader,
+#     optimizer,
+#     scaler : torch.amp.GradScaler
+# ):
+#     model.train()
+#     running_loss = 0.0
+#     dice_sum = 0.0
+#     dice_count = 0
+
+
+#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
+#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     eps = 1e-6
+
+#     # pbar = tqdm(train_loader, desc=f"[{modality}] epoch {epoch}/{epochs}")
+#     start = perf_counter()
+#     for idx, (img, seg) in enumerate(train_loader):
+#         if idx % 50 == 0 and idx > 0: 
+#             print(f"reached {idx} index")
+#         if idx == len(train_loader) - 1:
+#             end = perf_counter()
+#             elapsed_ms = (end - start)
+#             print(f"Time taken: {elapsed_ms:.3f}s")
+    
+#         img, seg = img.to(cfg.device), seg.to(cfg.device)
+
+#         optimizer.zero_grad()
+#         logits = model(img)
+#         loss = cfg.loss_fn(logits, seg.unsqueeze(1))
+#         scaler.scale(loss).backward()
+#         scaler.step(optimizer)
+#         scaler.update()
+
+#         running_loss += float(loss.item())
+#         pred = torch.argmax(logits, dim=1)
+
+#         # pbar.set_postfix(loss=float(loss.item()))
+#         for b in range(pred.shape[0]):
+#             dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
+
+#             for c in range(cfg.num_classes):
+#                 if (not cfg.include_bg_in_metric) and c == 0:
+#                     continue
+#                 p = (pred[b] == c)
+#                 g = (seg[b] == c)
+
+#                 inter = (p & g).sum().float()
+#                 denom = p.sum().float() + g.sum().float()
+
+#                 # If class absent in BOTH pred and gt, many people ignore it.
+#                 # We'll ignore by keeping NaN so it doesn't inflate mean.
+#                 if denom < 1e-6:
+#                     continue
+
+#                 dice_per_class[c] = (2.0 * inter + eps) / (denom + eps)
+
+#             mean_tumor = torch.nanmean(dice_per_class[1:]).item()
+#             dice_sum += float(mean_tumor)
+#             dice_count += 1
+#             d_cpu = dice_per_class.detach().cpu().double()
+
+#             # take only classes 1..3 into a compact vector of length 3
+#             d_compact = d_cpu[1:]  # [c1, c2, c3]
+#             valid = ~torch.isnan(d_compact)
+#             per_class_sum[valid] += d_compact[valid]
+#             per_class_count[valid] += 1.0
+
+#     train_loss = running_loss / max(1, len(train_loader))
+#     train_mean_tumor_dice = dice_sum / max(1, dice_count)
+
+#     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
+
+#     print(f"train_loss={train_loss:.4f} \
+#           train_mean_tumor_dice={train_mean_tumor_dice:.4f} \
+#             train_dice_per_class_mean={train_dice_per_class_mean.tolist()}")
+#     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
 @torch.no_grad()
 def validate_one_epoch(
@@ -270,7 +435,6 @@ def validate_one_epoch(
     start = perf_counter()
 
     for idx, (img, seg) in enumerate(val_loader):
-        print(f"element {idx}")
         if idx == len(val_loader) - 1:
             end = perf_counter()
             elapsed_ms = (end - start)
@@ -419,6 +583,9 @@ def main(cfg : CFG):
     train_loader, val_loader = build_loaders_for_modality(
         cfg=cfg, patient_names=patient_names)
     
+    cfg.use_augmentation = True
+    cfg.train_aug = build_train_augmentations()
+    
     model = build_unet_3d(num_classes=cfg.num_classes)
     model = model.to(cfg.device)
     if cfg.optimizer_name == "adamw":
@@ -461,7 +628,14 @@ def main(cfg : CFG):
             cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
         )
         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
+
+        print("tr_pc =", tr_pc.tolist())
+        print("va_pc =", va_pc.tolist())
+        print("tr_dice =", tr_dice)
+        print("va_dice =", va_dice)
+
         scheduler.step(va_loss)
+        
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(va_loss)
         history["train_dice"].append(tr_dice)

@@ -5,7 +5,6 @@ BraTS2021_00621.tar
 BraTS2021_Training_Data.tar
 results
 t1_out
-flattened_2d
 cod_vechi
 .gitignore
 __pycache__
