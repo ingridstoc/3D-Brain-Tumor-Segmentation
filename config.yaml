@@ -1,21 +1,75 @@
 root: "t1_out"
 num_classes: 4
 batch_size: 4
-num_workers: 1
+num_workers: 2
 epochs: 30
-lr: 1e-3
-weight_decay: 1e-4
 seed: 42
 include_bg_in_metric: false
 ensemble_temp: 1.0
 device: "auto"
+
+optimizer:
+  name: adamw
+  adamw:
+    lr: 0.001
+    weight_decay: 0.0001
+
+  adam:
+    lr: 0.001
+    weight_decay: 0.0001
+
+  sgd:
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 0.0001
+
+  rmsprop:
+    lr: 0.001
+    momentum: 0.9
+    weight_decay: 0.0001
+
+  adagrad:
+    lr: 0.01
+    weight_decay: 0.0001
+
+  adamax:
+    lr: 0.002
+    weight_decay: 0.0001
+
 loss:
-  name: "dice_ce"
+  name: dice_ce
   lambda_dice: 1.0
   lambda_ce: 1.0
   to_onehot_y: true
   softmax: true
-optimizer:
-  name: "adamw"
-  lr: 0.001
-  weight_decay: 0.0001
+
+scheduler:
+  name: reduce_on_plateau
+  reduce_on_plateau:
+    mode: min
+    factor: 0.5
+    patience: 3
+    threshold: 0.0001
+    min_lr: 0.000001
+
+  step:
+    step_size: 10
+    gamma: 0.1
+
+  multistep:
+    milestones: [15, 25]
+    gamma: 0.1
+
+  exponential:
+    gamma: 0.95
+
+  cosine:
+    T_max: 30
+    eta_min: 0.000001
+
+  cosine_warm_restarts:
+    T_0: 10
+    T_mult: 2
+    eta_min: 0.000001
+
+  none: {}

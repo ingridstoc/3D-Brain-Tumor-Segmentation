@@ -8,3 +8,5 @@ pip3 install -r runpod_requirements.txt
 git config user.email ingridstoc@gmail.com
 git config user.name ingridstoc
 python3 runpod.py
+python3 cropping.py
+python3 train.py

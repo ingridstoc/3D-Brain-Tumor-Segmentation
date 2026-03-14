@@ -837,6 +837,7 @@ if __name__ == "__main__":
 
             t1 = np.asanyarray(nib.load(str(t1_path)).dataobj).astype(np.float32)
             seg = np.asanyarray(nib.load(str(seg_path)).dataobj).astype(np.uint8)
+            seg[seg == 4] = 3
 
             process_case(
                 t1,

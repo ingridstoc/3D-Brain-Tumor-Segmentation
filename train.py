@@ -35,19 +35,13 @@ import time
 
 from monai.networks.nets import UNet
 from dataset import BraTSModalDataset, build_loaders_for_modality
-from utils import seed_everything, CFG
-from time import perf_counter
-from monai.transforms import (
-    Compose,
-    RandFlipd,
-    RandRotate90d,
-    RandAffined,
-    RandScaleIntensityd,
-    RandShiftIntensityd,
-    RandGaussianNoised,
-    RandBiasFieldd,
+from utils import (
+    CFG,
+    seed_everything,
+    build_optimizer,
+    build_scheduler,
 )
-
+from time import perf_counter
 MODALITIES = ["t1"]
 
 
@@ -157,59 +151,6 @@ def build_unet_3d(num_classes: int = 4) -> nn.Module:
         num_res_units=2,
         norm="INSTANCE",
     )
-
-
-# -------------------------
-# Metrics: Dice per class on loader (for val + weight building)
-# -------------------------
-
-# -------------------------
-# Train / Validate
-# -------------------------
-# @torch.no_grad()
-# def validate_scalar_dice(
-#     model: nn.Module,
-#     val_loader: DataLoader,
-#     device: torch.device,
-#     num_classes: int,
-#     include_bg: bool,
-# ) -> float:
-#     dice_vec = dice_per_class_from_loader(model, val_loader, device, num_classes=num_classes, include_bg=include_bg)
-#     return torch.nanmean(dice_vec[1:]).item()
-def build_train_augmentations():
-    """
-    Moderate 3D augmentations for BraTS crops.
-    Spatial transforms are applied to both image and label.
-    Intensity transforms are applied only to image.
-    """
-    return Compose([
-        # --- spatial ---
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
-
-        RandRotate90d(
-            keys=["image", "label"],
-            prob=0.3,
-            max_k=3,
-        ),
-
-        RandAffined(
-            keys=["image", "label"],
-            prob=0.2,
-            rotate_range=(0.1, 0.1, 0.1),     # radians, small rotations
-            scale_range=(0.1, 0.1, 0.1),      # ±10%
-            translate_range=(6, 6, 6),        # a few voxels
-            mode=("bilinear", "nearest"),
-            padding_mode="zeros",
-        ),
-
-        # --- intensity: image only ---
-        RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
-        RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
-        RandBiasFieldd(keys=["image"], prob=0.2),
-        RandGaussianNoised(keys=["image"], prob=0.15, std=0.01),
-    ])
 
 def apply_train_augmentations(
     img: torch.Tensor,
@@ -333,87 +274,6 @@ def train_one_epoch(
     )
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
-# def train_one_epoch(
-#     cfg : CFG,
-#     model: nn.Module,
-#     train_loader: DataLoader,
-#     optimizer,
-#     scaler : torch.amp.GradScaler
-# ):
-#     model.train()
-#     running_loss = 0.0
-#     dice_sum = 0.0
-#     dice_count = 0
-
-
-#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
-#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
-#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
-#     eps = 1e-6
-
-#     # pbar = tqdm(train_loader, desc=f"[{modality}] epoch {epoch}/{epochs}")
-#     start = perf_counter()
-#     for idx, (img, seg) in enumerate(train_loader):
-#         if idx % 50 == 0 and idx > 0: 
-#             print(f"reached {idx} index")
-#         if idx == len(train_loader) - 1:
-#             end = perf_counter()
-#             elapsed_ms = (end - start)
-#             print(f"Time taken: {elapsed_ms:.3f}s")
-    
-#         img, seg = img.to(cfg.device), seg.to(cfg.device)
-
-#         optimizer.zero_grad()
-#         logits = model(img)
-#         loss = cfg.loss_fn(logits, seg.unsqueeze(1))
-#         scaler.scale(loss).backward()
-#         scaler.step(optimizer)
-#         scaler.update()
-
-#         running_loss += float(loss.item())
-#         pred = torch.argmax(logits, dim=1)
-
-#         # pbar.set_postfix(loss=float(loss.item()))
-#         for b in range(pred.shape[0]):
-#             dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
-
-#             for c in range(cfg.num_classes):
-#                 if (not cfg.include_bg_in_metric) and c == 0:
-#                     continue
-#                 p = (pred[b] == c)
-#                 g = (seg[b] == c)
-
-#                 inter = (p & g).sum().float()
-#                 denom = p.sum().float() + g.sum().float()
-
-#                 # If class absent in BOTH pred and gt, many people ignore it.
-#                 # We'll ignore by keeping NaN so it doesn't inflate mean.
-#                 if denom < 1e-6:
-#                     continue
-
-#                 dice_per_class[c] = (2.0 * inter + eps) / (denom + eps)
-
-#             mean_tumor = torch.nanmean(dice_per_class[1:]).item()
-#             dice_sum += float(mean_tumor)
-#             dice_count += 1
-#             d_cpu = dice_per_class.detach().cpu().double()
-
-#             # take only classes 1..3 into a compact vector of length 3
-#             d_compact = d_cpu[1:]  # [c1, c2, c3]
-#             valid = ~torch.isnan(d_compact)
-#             per_class_sum[valid] += d_compact[valid]
-#             per_class_count[valid] += 1.0
-
-#     train_loss = running_loss / max(1, len(train_loader))
-#     train_mean_tumor_dice = dice_sum / max(1, dice_count)
-
-#     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
-
-#     print(f"train_loss={train_loss:.4f} \
-#           train_mean_tumor_dice={train_mean_tumor_dice:.4f} \
-#             train_dice_per_class_mean={train_dice_per_class_mean.tolist()}")
-#     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
-
 @torch.no_grad()
 def validate_one_epoch(
     cfg: CFG,
@@ -512,15 +372,6 @@ def validate_one_epoch(
 #     mean_tumor = torch.nanmean(dice_vec[1:]).item()  # classes 1..3
 #     return dice_vec, mean_tumor
 
-
-def load_best_model(ckpt_path: str, num_classes: int, device: torch.device) -> nn.Module:
-    model = build_unet_3d(num_classes=num_classes)
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-    model.load_state_dict(ckpt["model_state"])
-    model.to(device)
-    model.eval()
-    return model
-
 # def map_back_to_brats_labels(pred_0123: torch.Tensor) -> torch.Tensor:
 #     pred = pred_0123.clone()
 #     pred[pred == 3] = 4
@@ -583,36 +434,13 @@ def main(cfg : CFG):
     train_loader, val_loader = build_loaders_for_modality(
         cfg=cfg, patient_names=patient_names)
     
-    cfg.use_augmentation = True
-    cfg.train_aug = build_train_augmentations()
-    
     model = build_unet_3d(num_classes=cfg.num_classes)
     model = model.to(cfg.device)
-    if cfg.optimizer_name == "adamw":
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=cfg.lr,
-            weight_decay=cfg.weight_decay
-    )
-    elif cfg.optimizer_name == "adam":
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=cfg.lr,
-            weight_decay=cfg.weight_decay
-    )
-    else:
-        raise ValueError(f"Unknown optimizer: {cfg.optimizer_name}")
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="min",        # because we monitor val_loss
-        factor=0.5,        # new_lr = lr * 0.5
-        patience=3,        # wait 3 epochs without improvement
-        threshold=1e-4,    # minimum change to count as improvement
-        min_lr=1e-6      # do not reduce below this
-    )
+    optimizer = build_optimizer()
+    scheduler = build_scheduler()
     scaler = torch.amp.GradScaler('cuda')
 
-    history = {
+    history : Dict[str, List] = {
         "train_loss": [],
         "val_loss": [],
         "train_dice": [],
@@ -658,32 +486,6 @@ def main(cfg : CFG):
         print(f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
               f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}")
 
-
-    # save_single_modality_results(
-    #     cfg=cfg,
-    #     modality=modality,
-    #     dice_vec=dice_vec,
-    #     best_ckpt_path=best_ckpt_path,
-    # )
-
-    # return {
-    #     "modality": modality,
-    #     "best_val_mean_tumor_dice": best_val,
-    #     "val_dice_vec": dice_vec,
-    #     "best_ckpt_path": best_ckpt_path,
-    # }
-
 if __name__ == "__main__":
-    # cfg = CFG(
-    #     root="t1_out",  
-    #     batch_size=1,
-    #     num_workers=1,
-    #     epochs=30,
-    #     lr=1e-3,
-    #     weight_decay=1e-4,
-    #     seed=42,
-    #     include_bg_in_metric=False,   # typical: exclude background in Dice reporting
-    #     ensemble_temp=1.0,
-    # )
     cfg = CFG("config.yaml")
     main(cfg)

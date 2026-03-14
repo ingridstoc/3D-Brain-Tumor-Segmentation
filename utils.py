@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import torch
+import torch.nn as nn
 import yaml
 from monai.losses import DiceCELoss
 
@@ -27,7 +28,6 @@ def make_loss(loss_cfg: dict):
 
     raise ValueError(f"Unknown loss name: {loss_name}")
 
-
 class CFG:
     def __init__(self, path: str):
         with open(path, "r") as f:
@@ -53,11 +53,52 @@ class CFG:
         # optimizer config
         optimizer_cfg = data.get("optimizer", {})
         self.optimizer_name = optimizer_cfg.get("name", "adamw").lower()
+        self.optimizer_params = optimizer_cfg.get(self.optimizer_name, {})
 
-        # prefer optimizer section values if present
-        self.lr = optimizer_cfg.get("lr", data.get("lr", 1e-4))
-        self.weight_decay = optimizer_cfg.get("weight_decay", data.get("weight_decay", 1e-5))
+        # scheduler config
+        scheduler_cfg = data.get("scheduler", {})
+        self.scheduler_name = scheduler_cfg.get("name", "none").lower()
+        self.scheduler_params = scheduler_cfg.get(self.scheduler_name, {})
 
         # loss config
         self.loss_cfg = data.get("loss", {"name": "dice_ce"})
         self.loss_fn = make_loss(self.loss_cfg)
+
+
+def build_optimizer(cfg, model):
+    optimizer_map = {
+        "adam": torch.optim.Adam,
+        "adamw": torch.optim.AdamW,
+        "sgd": torch.optim.SGD,
+        "rmsprop": torch.optim.RMSprop,
+        "adagrad": torch.optim.Adagrad,
+        "adamax": torch.optim.Adamax,
+    }
+
+    if cfg.optimizer_name not in optimizer_map:
+        raise ValueError(f"Unknown optimizer: {cfg.optimizer_name}")
+
+    optimizer_class = optimizer_map[cfg.optimizer_name]
+    return optimizer_class(model.parameters(), **cfg.optimizer_params)
+
+
+def build_scheduler(cfg, optimizer):
+    scheduler_map = {
+        "reduce_on_plateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
+        "step": torch.optim.lr_scheduler.StepLR,
+        "multistep": torch.optim.lr_scheduler.MultiStepLR,
+        "exponential": torch.optim.lr_scheduler.ExponentialLR,
+        "cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
+        "cosine_warm_restarts": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts,
+        "none": None,
+    }
+
+    if cfg.scheduler_name not in scheduler_map:
+        raise ValueError(f"Unknown scheduler: {cfg.scheduler_name}")
+
+    scheduler_class = scheduler_map[cfg.scheduler_name]
+
+    if scheduler_class is None:
+        return None
+
+    return scheduler_class(optimizer, **cfg.scheduler_params)
