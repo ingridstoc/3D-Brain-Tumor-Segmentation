@@ -146,6 +146,76 @@ def build_unet_3d(num_classes: int = 4) -> nn.Module:
     )
 
 
+import torch.nn.functional as F
+
+
+def dice_from_logits(
+    logits: torch.Tensor,
+    seg: torch.Tensor,
+    num_classes: int,
+    include_bg: bool = True,
+    eps: float = 1e-6,
+):
+    """
+    Compute Dice score from logits.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Shape [B, C, H, W, D]
+    seg : torch.Tensor
+        Shape [B, 1, H, W, D] or [B, H, W, D]
+    num_classes : int
+        Number of segmentation classes
+    include_bg : bool
+        Whether to include class 0 in the Dice
+    eps : float
+        Numerical stability constant
+
+    Returns
+    -------
+    dice : torch.Tensor
+        Dice per batch per class → shape [B, C]
+    mean_dice : torch.Tensor
+        Mean Dice per batch item
+    """
+
+    # predicted class labels
+    pred = torch.argmax(logits, dim=1)   # [B,H,W,D]
+
+    # ground truth labels
+    if seg.ndim == 5:
+        gt = seg.squeeze(1)              # [B,H,W,D]
+    else:
+        gt = seg
+
+    # convert to one-hot
+    pred_1h = F.one_hot(pred, num_classes=num_classes)
+    gt_1h   = F.one_hot(gt,   num_classes=num_classes)
+
+    pred_1h = pred_1h.permute(0, 4, 1, 2, 3).float()   # [B,C,H,W,D]
+    gt_1h   = gt_1h.permute(0, 4, 1, 2, 3).float()
+
+    # intersection and denominator
+    inter = (pred_1h * gt_1h).sum(dim=(2, 3, 4))        # [B,C]
+    denom = pred_1h.sum(dim=(2, 3, 4)) + gt_1h.sum(dim=(2, 3, 4))
+
+    dice = (2.0 * inter + eps) / (denom + eps)
+
+    # ignore classes absent in both pred and gt
+    dice[denom < eps] = torch.nan
+
+    # remove background if requested
+    if not include_bg:
+        dice_for_mean = dice[:, 1:]
+    else:
+        dice_for_mean = dice
+
+    mean_dice = torch.nanmean(dice_for_mean, dim=1)
+
+    return dice, mean_dice
+
+
 def train_one_epoch(
     cfg: CFG,
     model: nn.Module,
@@ -164,9 +234,8 @@ def train_one_epoch(
     eps = 1e-6
 
     start = perf_counter()
-
     for idx, (img, seg) in enumerate(train_loader):
-        if idx % 5 == 0 and idx > 0:
+        if idx % 50 == 0 and idx > 0:
             print(f"reached {idx} index")
         if idx == len(train_loader) - 1:
             end = perf_counter()
@@ -178,7 +247,6 @@ def train_one_epoch(
         # img expected shape [B,1,H,W,D]
         # seg expected shape [B,H,W,D]
         # -------------------------------------------------
-        start_test = perf_counter()
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
@@ -191,43 +259,22 @@ def train_one_epoch(
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-
         running_loss += float(loss.item())
-        pred = torch.argmax(logits, dim=1)
-        test_1_time = perf_counter()
-        elapsed_s = (test_1_time - start_test)
-        print(f"Time taken first: {elapsed_s:.3f}s")
-        for b in range(pred.shape[0]):
-            dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
 
-            for c in range(cfg.num_classes):
-                if (not cfg.include_bg_in_metric) and c == 0:
-                    continue
+        dice_per_class, mean_dice = dice_from_logits(
+            logits,
+            seg,
+            cfg.num_classes,
+            cfg.include_bg_in_metric
+        )
+        dice_sum += torch.nansum(mean_dice).item()
+        dice_count += (~torch.isnan(mean_dice)).sum().item()
 
-                p = (pred[b] == c)
-                g = (seg[b] == c)
+        d_compact = dice_per_class[:, 1:].detach().cpu().double()
+        valid = ~torch.isnan(d_compact)
 
-                inter = (p & g).sum().float()
-                denom = p.sum().float() + g.sum().float()
-
-                if denom < 1e-6:
-                    continue
-
-                dice_per_class[c] = (2.0 * inter + eps) / (denom + eps)
-
-            mean_tumor = torch.nanmean(dice_per_class[1:]).item()
-            dice_sum += float(mean_tumor)
-            dice_count += 1
-
-            d_cpu = dice_per_class.detach().cpu().double()
-            d_compact = d_cpu[1:]  # [c1, c2, c3]
-            valid = ~torch.isnan(d_compact)
-            per_class_sum[valid] += d_compact[valid]
-            per_class_count[valid] += 1.0
-        test_2_time = perf_counter()
-        elapsed_s = (test_2_time - test_1_time)
-        print(f"Time taken second: {elapsed_s:.3f}s")
-        print(end="\n\n")
+        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
+        per_class_count += valid.sum(dim=0).double()
 
     train_loss = running_loss / max(1, len(train_loader))
     train_mean_tumor_dice = dice_sum / max(1, dice_count)
