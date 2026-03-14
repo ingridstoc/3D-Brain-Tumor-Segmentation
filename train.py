@@ -19,22 +19,17 @@ pip install nibabel monai torch tqdm
 from __future__ import annotations
 
 import os
-import json
-import random
 from typing import Dict, List, Tuple
-
-import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, Subset
 
 from tqdm import tqdm
 import time
 
 from monai.networks.nets import UNet
-from dataset import BraTSModalDataset, build_loaders_for_modality
+from dataset import build_loaders_for_modality
 from utils import (
     CFG,
     seed_everything,
@@ -43,8 +38,6 @@ from utils import (
 )
 from time import perf_counter
 MODALITIES = ["t1"]
-
-
 import matplotlib.pyplot as plt
 
 class LivePlotter:
@@ -152,37 +145,6 @@ def build_unet_3d(num_classes: int = 4) -> nn.Module:
         norm="INSTANCE",
     )
 
-def apply_train_augmentations(
-    img: torch.Tensor,
-    seg: torch.Tensor,
-    aug,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    img: [B, 1, H, W, D]
-    seg: [B, H, W, D]
-
-    Returns:
-        aug_img: [B, 1, H, W, D]
-        aug_seg: [B, H, W, D]
-    """
-    aug_imgs = []
-    aug_segs = []
-
-    for b in range(img.shape[0]):
-        sample = {
-            "image": img[b],                 # [1,H,W,D]
-            "label": seg[b].unsqueeze(0),    # [1,H,W,D]
-        }
-
-        sample = aug(sample)
-
-        aug_imgs.append(sample["image"])
-        aug_segs.append(sample["label"].squeeze(0))
-
-    aug_img = torch.stack(aug_imgs, dim=0)
-    aug_seg = torch.stack(aug_segs, dim=0).long()
-
-    return aug_img, aug_seg
 
 def train_one_epoch(
     cfg: CFG,
@@ -204,7 +166,7 @@ def train_one_epoch(
     start = perf_counter()
 
     for idx, (img, seg) in enumerate(train_loader):
-        if idx % 50 == 0 and idx > 0:
+        if idx % 5 == 0 and idx > 0:
             print(f"reached {idx} index")
         if idx == len(train_loader) - 1:
             end = perf_counter()
@@ -216,9 +178,7 @@ def train_one_epoch(
         # img expected shape [B,1,H,W,D]
         # seg expected shape [B,H,W,D]
         # -------------------------------------------------
-        if cfg.use_augmentation:
-            img, seg = apply_train_augmentations(img, seg, cfg.train_aug)
-
+        start_test = perf_counter()
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
@@ -226,7 +186,7 @@ def train_one_epoch(
 
         with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
             logits = model(img)
-            loss = cfg.loss_fn(logits, seg.unsqueeze(1))
+            loss = cfg.loss_fn(logits, seg)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -234,7 +194,9 @@ def train_one_epoch(
 
         running_loss += float(loss.item())
         pred = torch.argmax(logits, dim=1)
-
+        test_1_time = perf_counter()
+        elapsed_s = (test_1_time - start_test)
+        print(f"Time taken first: {elapsed_s:.3f}s")
         for b in range(pred.shape[0]):
             dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
 
@@ -262,6 +224,10 @@ def train_one_epoch(
             valid = ~torch.isnan(d_compact)
             per_class_sum[valid] += d_compact[valid]
             per_class_count[valid] += 1.0
+        test_2_time = perf_counter()
+        elapsed_s = (test_2_time - test_1_time)
+        print(f"Time taken second: {elapsed_s:.3f}s")
+        print(end="\n\n")
 
     train_loss = running_loss / max(1, len(train_loader))
     train_mean_tumor_dice = dice_sum / max(1, dice_count)
@@ -299,10 +265,11 @@ def validate_one_epoch(
             end = perf_counter()
             elapsed_ms = (end - start)
             print(f"Time taken: {elapsed_ms:.3f}s")
-        img, seg = img.to(cfg.device), seg.to(cfg.device)
+        img = img.to(cfg.device, non_blocking=True)
+        seg = seg.to(cfg.device, non_blocking=True)
 
         logits = model(img)
-        loss = cfg.loss_fn(logits, seg.unsqueeze(1))
+        loss = cfg.loss_fn(logits, seg)
         running_loss += float(loss.item())
 
         pred = torch.argmax(logits, dim=1)  # [B,H,W,D]
@@ -355,72 +322,6 @@ def validate_one_epoch(
 
     return val_loss, val_mean_tumor_dice, val_dice_per_class_mean
 
-# def validate_modality(
-#     model,
-#     cfg,
-#     val_loader,
-#     device: torch.device,
-# ):
-
-#     dice_vec = dice_per_class_from_loader(
-#         model,
-#         val_loader,
-#         device,
-#         num_classes=cfg.num_classes,
-#         include_bg=cfg.include_bg_in_metric,
-#     )
-#     mean_tumor = torch.nanmean(dice_vec[1:]).item()  # classes 1..3
-#     return dice_vec, mean_tumor
-
-# def map_back_to_brats_labels(pred_0123: torch.Tensor) -> torch.Tensor:
-#     pred = pred_0123.clone()
-#     pred[pred == 3] = 4
-#     return pred
-
-# def save_single_modality_results(
-#     cfg,
-#     modality: str,
-#     dice_vec: torch.Tensor,
-#     best_ckpt_path: str,
-# ):
-#     """
-#     For a single modality, W will be [1,C] all ones (softmax of a single row).
-#     Still saved in the same format so you can reuse the code later.
-#     """
-#     dice_by_model: Dict[str, torch.Tensor] = {modality: dice_vec}
-#     names, W = compute_classwise_weights(dice_by_model, temp=cfg.ensemble_temp)
-
-#     os.makedirs("results", exist_ok=True)
-
-#     weights_obj = {
-#         "modalities_order": names,                    # [modality]
-#         "weights_MxC": W.cpu().tolist(),              # [[...]] shape [1,C]
-#         "dice_per_class_internal_0_1_2_3": {modality: dice_vec.tolist()},
-#         "best_ckpt_path": best_ckpt_path,
-#         "note": "Class 3 corresponds to original BraTS label 4 (enhancing).",
-#         "ensemble_temp": cfg.ensemble_temp,
-#     }
-
-#     json_path = os.path.join("results", f"{modality}_ensemble_classwise_weights.json")
-#     pt_path = os.path.join("results", f"{modality}_ensemble_classwise_weights.pt")
-
-#     with open(json_path, "w") as f:
-#         json.dump(weights_obj, f, indent=2)
-
-#     torch.save(
-#         {"modalities_order": names, "W": W.cpu(), "dice_by_model": dice_by_model, "best_ckpt_path": best_ckpt_path},
-#         pt_path,
-#     )
-
-#     print("Saved:")
-#     print(" -", json_path)
-#     print(" -", pt_path)
-
-#     print("\nClass-wise weights W (rows modalities, cols classes 0..3):")
-#     for i, m in enumerate(names):
-#         print(m, W[i].cpu().numpy())
-
-
 # -------------------------
 # Main pipeline
 # -------------------------
@@ -436,8 +337,8 @@ def main(cfg : CFG):
     
     model = build_unet_3d(num_classes=cfg.num_classes)
     model = model.to(cfg.device)
-    optimizer = build_optimizer()
-    scheduler = build_scheduler()
+    optimizer = build_optimizer(cfg, model)
+    scheduler = build_scheduler(cfg, optimizer)
     scaler = torch.amp.GradScaler('cuda')
 
     history : Dict[str, List] = {

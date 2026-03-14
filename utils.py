@@ -41,7 +41,6 @@ class CFG:
         self.epochs = data.get("epochs", 1)
         self.seed = data.get("seed", 42)
         self.include_bg_in_metric = data.get("include_bg_in_metric", False)
-        self.ensemble_temp = data.get("ensemble_temp", 1.0)
 
         # device
         device_value = data.get("device", "auto")

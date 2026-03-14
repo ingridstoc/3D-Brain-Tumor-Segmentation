@@ -38,17 +38,11 @@ def build_train_augmentations():
             keys=["image", "label"],
             prob=0.2,
             rotate_range=(0.1, 0.1, 0.1),     # radians, small rotations
-            scale_range=(0.1, 0.1, 0.1),      # ±10%
+            scale_range=(0.0, 0.0, 0.0),
             translate_range=(6, 6, 6),        # a few voxels
             mode=("bilinear", "nearest"),
             padding_mode="zeros",
         ),
-
-        # --- intensity: image only ---
-        RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
-        RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
-        RandBiasFieldd(keys=["image"], prob=0.2),
-        RandGaussianNoised(keys=["image"], prob=0.15, std=0.01),
     ])
 
 
@@ -125,11 +119,13 @@ class BraTSModalDataset(Dataset):
 
     def __getitem__(self, idx: int):
         entry = self.index[idx]
+        image = np.load(entry["img"], mmap_mode="r")
+        label = np.load(entry["seg"], mmap_mode="r")
         sample = {
-            "image": np.load(entry["img"]).astype(np.float32)[None, ...],
-            "label": np.load(entry["seg"]).astype(np.int64)[None, ...]
+            "image": np.asarray(image, dtype=np.float32)[None, ...],
+            "label": np.asarray(label, dtype=np.int64)[None, ...],
         }
-        
+
         if self.transformation:
             sample = self.transformation(sample)
 
@@ -182,8 +178,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
     val_ds = BraTSModalDataset(
         val_patients,
         cfg.root,
-        include_random_crops=False,
-        transformation=build_train_augmentations())
+        include_random_crops=False)
 
     print(f"Patients: total={len(patient_names)}")
     print(
@@ -202,7 +197,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         num_workers=cfg.num_workers,
         pin_memory=(cfg.device.type == "cuda"),
         drop_last=False,
-
+        persistent_workers=(cfg.num_workers > 0),
     )
 
     val_loader = DataLoader(
@@ -212,6 +207,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         num_workers=cfg.num_workers,
         pin_memory=(cfg.device.type == "cuda"),
         drop_last=False,
+        persistent_workers=(cfg.num_workers > 0),
     )
 
     print(len(train_loader))
