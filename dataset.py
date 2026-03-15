@@ -119,11 +119,9 @@ class BraTSModalDataset(Dataset):
 
     def __getitem__(self, idx: int):
         entry = self.index[idx]
-        image = np.load(entry["img"], mmap_mode="r")
-        label = np.load(entry["seg"], mmap_mode="r")
         sample = {
-            "image": np.asarray(image, dtype=np.float32)[None, ...],
-            "label": np.asarray(label, dtype=np.int64)[None, ...],
+            "image": np.asarray(np.load(entry["img"]), dtype=np.float32)[None, ...],
+            "label": np.asarray(np.load(entry["seg"]), dtype=np.int64)[None, ...],
         }
 
         if self.transformation:
