@@ -7,6 +7,8 @@ pip3 install -r runpod_requirements.txt
 # pip3 install torch torchvision numpy matplotlib nibabel scikit-learn kagglehub
 git config user.email ingridstoc@gmail.com
 git config user.name ingridstoc
+
+export RUNPOD_NUM_WORKERS=8
 python3 runpod.py
-python3 cropping.py
 python3 train.py
+

@@ -212,17 +212,125 @@
 #     main()
 
 #!/usr/bin/env python3
+# from __future__ import annotations
+
+# import sys
+# import shutil
+# import tarfile
+# from pathlib import Path
+
+# import numpy as np
+# import nibabel as nib
+
+# from cropping import process_case
+
+
+# # -----------------------------
+# # Download + extract helpers
+# # -----------------------------
+# def extract_all_tars(root: Path):
+#     tars = sorted(root.rglob("*.tar"))
+#     if not tars:
+#         print(f"[extract] No .tar files found under: {root}")
+#         return
+
+#     print(f"[extract] Found {len(tars)} tar files. Extracting...")
+#     for i, tar_path in enumerate(tars, 1):
+#         out_dir = tar_path.parent
+#         print(f"  [{i}/{len(tars)}] extracting: {tar_path.name} -> {out_dir}")
+#         try:
+#             with tarfile.open(tar_path, "r:*") as tf:
+#                 tf.extractall(path=out_dir)
+#         except Exception as e:
+#             print(f"    !! Failed extracting {tar_path}: {repr(e)}")
+
+
+# def download_to_raw_folder(raw_dir: Path) -> Path:
+#     """
+#     Downloads KaggleHub dataset into raw_dir, keeping raw_dir as the single
+#     top-level location for the raw dataset.
+#     """
+#     import kagglehub
+
+#     raw_dir.mkdir(parents=True, exist_ok=True)
+
+#     print("[download] kagglehub.dataset_download(...)")
+#     src = Path(kagglehub.dataset_download("dschettler8845/brats-2021-task1"))
+#     print(f"[download] kagglehub cache path: {src}")
+
+#     # Copy into raw_dir, skip existing items
+#     for item in src.iterdir():
+#         dest = raw_dir / item.name
+#         if dest.exists():
+#             continue
+#         if item.is_dir():
+#             shutil.copytree(item, dest)
+#         else:
+#             shutil.copy2(item, dest)
+
+#     return raw_dir
+
+
+# def remove_ds_store(root: Path):
+#     for p in root.rglob(".DS_Store"):
+#         try:
+#             p.unlink()
+#         except Exception:
+#             pass
+
+
+# # -----------------------------
+# # Main
+# # -----------------------------
+# def main():
+#     """
+#     Enforced layout:
+#       base_dir/
+#         1/        <-- raw dataset (downloaded + extracted)
+#         t1_out/   <-- cropped outputs
+#     """
+#     base_dir = Path(".").resolve()
+#     raw_dir = base_dir / "1"
+#     out_dir = base_dir / "t1_out"
+
+#     out_shape = (128, 128, 128)
+
+#     print(f"[paths] base_dir = {base_dir}")
+#     print(f"[paths] raw_dir  = {raw_dir}   (RAW dataset here)")
+#     print(f"[paths] out_dir  = {out_dir}   (CROPPED outputs here)")
+#     base_dir.mkdir(parents=True, exist_ok=True)
+#     raw_dir.mkdir(parents=True, exist_ok=True)
+#     out_dir.mkdir(parents=True, exist_ok=True)
+
+#     # 1) Download to /cod_licenta/1
+#     download_to_raw_folder(raw_dir)
+
+#     # 2) Extract tar(s) into /cod_licenta/1
+#     extract_all_tars(raw_dir)
+#     remove_ds_store(raw_dir)
+
+#     # 3) Find the actual case folder root inside /cod_licenta/1
+#     print("[scan] Locating case directories...")
+#     nii_segs = list(raw_dir.rglob("*seg*.nii*"))
+#     if not nii_segs:
+#         print("[error] Could not find any '*seg*.nii*' under raw_dir. Check extraction.")
+#         sys.exit(2)
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+# nou multiprocess
 from __future__ import annotations
 
+import os
 import sys
 import shutil
 import tarfile
 from pathlib import Path
 
-import numpy as np
-import nibabel as nib
-
-from cropping import process_case
+from cropping import build_crops_parallel
 
 
 # -----------------------------
@@ -258,7 +366,6 @@ def download_to_raw_folder(raw_dir: Path) -> Path:
     src = Path(kagglehub.dataset_download("dschettler8845/brats-2021-task1"))
     print(f"[download] kagglehub cache path: {src}")
 
-    # Copy into raw_dir, skip existing items
     for item in src.iterdir():
         dest = raw_dir / item.name
         if dest.exists():
@@ -280,6 +387,27 @@ def remove_ds_store(root: Path):
 
 
 # -----------------------------
+# Dataset scan helper
+# -----------------------------
+def locate_case_root(raw_dir: Path) -> Path:
+    """
+    Find the directory that directly contains all BraTS case folders.
+    """
+    print("[scan] Locating case directories...")
+    nii_segs = list(raw_dir.rglob("*seg*.nii*"))
+    if not nii_segs:
+        print("[error] Could not find any '*seg*.nii*' under raw_dir. Check extraction.")
+        sys.exit(2)
+
+    sample_case_dir = nii_segs[0].parent
+    case_root = sample_case_dir.parent
+
+    print(f"[scan] sample case dir = {sample_case_dir}")
+    print(f"[scan] case root       = {case_root}")
+    return case_root
+
+
+# -----------------------------
 # Main
 # -----------------------------
 def main():
@@ -292,29 +420,42 @@ def main():
     base_dir = Path(".").resolve()
     raw_dir = base_dir / "1"
     out_dir = base_dir / "t1_out"
-
     out_shape = (128, 128, 128)
 
-    print(f"[paths] base_dir = {base_dir}")
-    print(f"[paths] raw_dir  = {raw_dir}   (RAW dataset here)")
-    print(f"[paths] out_dir  = {out_dir}   (CROPPED outputs here)")
+    num_workers = int(os.environ.get("RUNPOD_NUM_WORKERS", min(8, os.cpu_count() or 4)))
+
+    print(f"[paths] base_dir    = {base_dir}")
+    print(f"[paths] raw_dir     = {raw_dir}")
+    print(f"[paths] out_dir     = {out_dir}")
+    print(f"[paths] out_shape   = {out_shape}")
+    print(f"[paths] num_workers = {num_workers}")
+
     base_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) Download to /cod_licenta/1
+    # 1) Download raw dataset
     download_to_raw_folder(raw_dir)
 
-    # 2) Extract tar(s) into /cod_licenta/1
+    # 2) Extract tar archives
     extract_all_tars(raw_dir)
     remove_ds_store(raw_dir)
 
-    # 3) Find the actual case folder root inside /cod_licenta/1
-    print("[scan] Locating case directories...")
-    nii_segs = list(raw_dir.rglob("*seg*.nii*"))
-    if not nii_segs:
-        print("[error] Could not find any '*seg*.nii*' under raw_dir. Check extraction.")
-        sys.exit(2)
+    # 3) Find actual root that contains patient folders
+    case_root = locate_case_root(raw_dir)
+
+    # 4) Build cropped dataset directly into t1_out
+    build_crops_parallel(
+        dataset_root=case_root,
+        out_dir=out_dir,
+        out_shape=out_shape,
+        num_workers=num_workers,
+        debug_first_n=1,
+        base_seed=12345,
+    )
+
+    print("[done] t1_out dataset created successfully.")
+
 
 if __name__ == "__main__":
     main()
