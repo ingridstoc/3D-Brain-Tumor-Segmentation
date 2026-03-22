@@ -18,11 +18,6 @@ from monai.transforms import (
 
 
 def build_train_augmentations():
-    """
-    Moderate 3D augmentations for BraTS crops.
-    Spatial transforms are applied to both image and label.
-    Intensity transforms are applied only to image.
-    """
     return Compose([
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
@@ -33,19 +28,7 @@ def build_train_augmentations():
             prob=0.3,
             max_k=3,
         ),
-
-        RandAffined(
-            keys=["image", "label"],
-            prob=0.2,
-            rotate_range=(0.1, 0.1, 0.1),
-            scale_range=(0.0, 0.0, 0.0),
-            translate_range=(6, 6, 6),
-            mode=("bilinear", "nearest"),
-            padding_mode="zeros",
-        ),
     ])
-
-
 class BraTSModalDataset(Dataset):
     """
     One dataset for one modality (here T1).
@@ -171,7 +154,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         train_patients,
         cfg.root,
         include_random_crops=True,
-        transformation=None,   # as requested
+        transformation=build_train_augmentations(),
     )
 
     val_ds = BraTSModalDataset(
