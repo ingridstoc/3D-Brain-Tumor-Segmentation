@@ -241,15 +241,22 @@ def train_one_epoch(
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
+        # MONAI DiceCELoss with to_onehot_y=True expects target shape [B,1,H,W,D]
+        seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
+
         optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
             logits = model(img)
-            loss = cfg.loss_fn(logits, seg)
+            loss = cfg.loss_fn(logits, seg_for_loss)
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        if scaler is not None and scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         running_loss += float(loss.item())
 
         dice_per_class, mean_dice = dice_from_logits(
@@ -307,8 +314,10 @@ def validate_one_epoch(
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
+        seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
+
         logits = model(img)
-        loss = cfg.loss_fn(logits, seg)
+        loss = cfg.loss_fn(logits, seg_for_loss)
         running_loss += float(loss.item())
 
         dice_per_class, mean_dice = dice_from_logits(
@@ -366,7 +375,7 @@ def main(cfg : CFG):
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
     #scaler = torch.amp.GradScaler('cuda')
-    scaler=None
+    scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
 
     history : Dict[str, List] = {
         "train_loss": [],
