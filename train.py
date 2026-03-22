@@ -41,18 +41,11 @@ MODALITIES = ["t1"]
 import matplotlib.pyplot as plt
 
 class LivePlotter:
-    """
-    Live-updates 3 figures:
-      1) train/val loss
-      2) train/val mean tumor dice
-      3) per-class dice (train+val => 8 curves)
-    Works in .py scripts via plt.pause().
-    """
     def __init__(self, num_classes: int, save_dir: str | None = None):
         self.C = num_classes - 1
         self.save_dir = save_dir
 
-        plt.ion()  # interactive on
+        plt.ion()
 
         self.fig_loss, self.ax_loss = plt.subplots()
         self.fig_dice, self.ax_dice = plt.subplots()
@@ -179,8 +172,6 @@ def dice_from_logits(
     mean_dice : torch.Tensor
         Mean Dice per batch item
     """
-
-    # predicted class labels
     pred = torch.argmax(logits, dim=1)   # [B,H,W,D]
 
     # ground truth labels
@@ -303,7 +294,7 @@ def validate_one_epoch(
     num_plot_classes = cfg.num_classes - 1  # classes 1..3
     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
-    eps = 1e-6
+ 
 
     start = perf_counter()
 
@@ -312,6 +303,7 @@ def validate_one_epoch(
             end = perf_counter()
             elapsed_ms = (end - start)
             print(f"Time taken: {elapsed_ms:.3f}s")
+
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
@@ -319,39 +311,22 @@ def validate_one_epoch(
         loss = cfg.loss_fn(logits, seg)
         running_loss += float(loss.item())
 
-        pred = torch.argmax(logits, dim=1)  # [B,H,W,D]
+        dice_per_class, mean_dice = dice_from_logits(
+            logits,
+            seg,
+            cfg.num_classes,
+            cfg.include_bg_in_metric
+        )
 
-        # Dice per image in batch
-        for b in range(pred.shape[0]):
-            dice_per_class = torch.full((cfg.num_classes,), float("nan"), device=cfg.device)
+        dice_sum += torch.nansum(mean_dice).item()
+        dice_count += (~torch.isnan(mean_dice)).sum().item()
 
-            for c in range(cfg.num_classes):
-                if (not cfg.include_bg_in_metric) and c == 0:
-                    continue
+        d_compact = dice_per_class[:, 1:].detach().cpu().double()
+        valid = ~torch.isnan(d_compact)
 
-                p = (pred[b] == c)
-                g = (seg[b] == c)
-
-                inter = (p & g).sum().float()
-                denom = p.sum().float() + g.sum().float()
-
-                # ignore class if absent in both pred & gt
-                if denom < 1e-6:
-                    continue
-
-                dice_per_class[c] = (2.0 * inter + eps) / (denom + eps)
-
-            mean_tumor = torch.nanmean(dice_per_class[1:]).item()
-            dice_sum += float(mean_tumor)
-            dice_count += 1
-
-            d_cpu = dice_per_class.detach().cpu().double()
-
-            # take only classes 1..3 into a compact vector of length 3
-            d_compact = d_cpu[1:]  # [c1, c2, c3]
-            valid = ~torch.isnan(d_compact)
-            per_class_sum[valid] += d_compact[valid]
-            per_class_count[valid] += 1.0
+        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
+        per_class_count += valid.sum(dim=0).double()
+        
 
 
     elapsed_s = perf_counter() - start
@@ -373,6 +348,10 @@ def validate_one_epoch(
 # Main pipeline
 # -------------------------
 def main(cfg : CFG):
+    print("optimizer_name:", cfg.optimizer_name)
+    print("optimizer_params:", cfg.optimizer_params)
+    print("scheduler_name:", cfg.scheduler_name)
+    print("scheduler_params:", cfg.scheduler_params)
     seed_everything(cfg.seed)
     print("Device:", cfg.device)
     patient_names = sorted([
@@ -386,7 +365,8 @@ def main(cfg : CFG):
     model = model.to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
-    scaler = torch.amp.GradScaler('cuda')
+    #scaler = torch.amp.GradScaler('cuda')
+    scaler=None
 
     history : Dict[str, List] = {
         "train_loss": [],
@@ -410,7 +390,11 @@ def main(cfg : CFG):
         print("tr_dice =", tr_dice)
         print("va_dice =", va_dice)
 
-        scheduler.step(va_loss)
+        if scheduler is not None:
+            if cfg.scheduler_name == "reduce_on_plateau":
+                scheduler.step(va_loss)
+            else:
+                scheduler.step()
         
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(va_loss)

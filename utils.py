@@ -1,7 +1,6 @@
 import random
 import numpy as np
 import torch
-import torch.nn as nn
 import yaml
 from monai.losses import DiceCELoss
 
@@ -28,12 +27,12 @@ def make_loss(loss_cfg: dict):
 
     raise ValueError(f"Unknown loss name: {loss_name}")
 
+
 class CFG:
     def __init__(self, path: str):
         with open(path, "r") as f:
             data = yaml.safe_load(f)
 
-        # basic params
         self.root = data["root"]
         self.num_classes = data.get("num_classes", 4)
         self.batch_size = data.get("batch_size", 1)
@@ -42,24 +41,20 @@ class CFG:
         self.seed = data.get("seed", 42)
         self.include_bg_in_metric = data.get("include_bg_in_metric", False)
 
-        # device
         device_value = data.get("device", "auto")
         if device_value == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device_value)
 
-        # optimizer config
         optimizer_cfg = data.get("optimizer", {})
         self.optimizer_name = optimizer_cfg.get("name", "adamw").lower()
         self.optimizer_params = optimizer_cfg.get(self.optimizer_name, {})
 
-        # scheduler config
         scheduler_cfg = data.get("scheduler", {})
         self.scheduler_name = scheduler_cfg.get("name", "none").lower()
         self.scheduler_params = scheduler_cfg.get(self.scheduler_name, {})
 
-        # loss config
         self.loss_cfg = data.get("loss", {"name": "dice_ce"})
         self.loss_fn = make_loss(self.loss_cfg)
 

@@ -1165,12 +1165,13 @@ def process_case(
     out_patient_dir = out_dir / f"patient_{case_id}"
     out_patient_dir.mkdir(parents=True, exist_ok=True)
 
+    # Keep your current crop logic, but save with OLD filenames
     crop_specs = [
-        ("center", lambda: tumor_centered_crop(t1, seg, out_shape=out_shape)),
-        ("shift1", lambda: shifted_tumor_crop_pair(rng, t1, seg, out_shape=out_shape)),
-        ("shift2", lambda: shifted_tumor_crop_pair(rng, t1, seg, out_shape=out_shape)),
-        ("boundary", lambda: boundary_crop_pair(rng, t1, seg, out_shape=out_shape)),
-        ("random", lambda: random_crop_pair(rng, t1, seg, out_shape=out_shape)),
+        ("crop",   lambda: tumor_centered_crop(t1, seg, out_shape=out_shape)),          # old "center" -> "crop"
+        ("rand1",  lambda: shifted_tumor_crop_pair(rng, t1, seg, out_shape=out_shape)), # old "shift1" -> "rand1"
+        ("rand2",  lambda: shifted_tumor_crop_pair(rng, t1, seg, out_shape=out_shape)), # old "shift2" -> "rand2"
+        ("rand3",  lambda: boundary_crop_pair(rng, t1, seg, out_shape=out_shape)),      # old "boundary" -> "rand3"
+        ("rand4",  lambda: random_crop_pair(rng, t1, seg, out_shape=out_shape)),        # old "random" -> "rand4"
     ]
 
     for crop_name, crop_fn in crop_specs:
@@ -1182,7 +1183,6 @@ def process_case(
 
         if do_debug and debug_dir is not None:
             save_debug_slices(debug_dir, case_id, crop_name, img_c, mask_c)
-
 
 # -----------------------------
 # 4) Parallel worker
@@ -1263,7 +1263,13 @@ def build_crops_parallel(
     debug_dir = out_dir / "_debug_png"
     debug_dir.mkdir(parents=True, exist_ok=True)
 
-    case_dirs = sorted([p for p in dataset_root.iterdir() if p.is_dir()])
+    case_dirs = sorted([
+        p for p in dataset_root.rglob("*")
+        if p.is_dir()
+        and any(p.glob("*t1*.nii*"))
+        and any(p.glob("*seg*.nii*"))
+        ])
+
     print(f"[crop] Found {len(case_dirs)} case folders")
     print(f"[crop] Using {num_workers} worker processes")
 

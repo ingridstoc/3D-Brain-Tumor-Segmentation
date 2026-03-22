@@ -16,6 +16,7 @@ from monai.transforms import (
     RandBiasFieldd,
 )
 
+
 def build_train_augmentations():
     """
     Moderate 3D augmentations for BraTS crops.
@@ -23,7 +24,6 @@ def build_train_augmentations():
     Intensity transforms are applied only to image.
     """
     return Compose([
-        # --- spatial ---
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
@@ -37,9 +37,9 @@ def build_train_augmentations():
         RandAffined(
             keys=["image", "label"],
             prob=0.2,
-            rotate_range=(0.1, 0.1, 0.1),     # radians, small rotations
+            rotate_range=(0.1, 0.1, 0.1),
             scale_range=(0.0, 0.0, 0.0),
-            translate_range=(6, 6, 6),        # a few voxels
+            translate_range=(6, 6, 6),
             mode=("bilinear", "nearest"),
             padding_mode="zeros",
         ),
@@ -50,7 +50,7 @@ class BraTSModalDataset(Dataset):
     """
     One dataset for one modality (here T1).
 
-    Files per patient may contain:
+    Expected files per patient:
         case_T1_crop.npy
         case_seg_crop.npy
         case_T1_rand1.npy
@@ -59,8 +59,8 @@ class BraTSModalDataset(Dataset):
         case_T1_rand4.npy
         case_seg_rand4.npy
 
-    Train can use all crops.
-    Val can use only tumor crop.
+    Train uses all crops.
+    Val uses only tumor-centered crop ("crop").
 
     Returns:
       image: FloatTensor [1, H, W, D]
@@ -72,7 +72,7 @@ class BraTSModalDataset(Dataset):
         patient_folders: List[str],
         root: str,
         include_random_crops: bool = True,
-        transformation = None
+        transformation=None,
     ):
         super().__init__()
         self.root = root
@@ -89,17 +89,17 @@ class BraTSModalDataset(Dataset):
 
             img_files = sorted(
                 f for f in files
-                if f.endswith(".npy") and "T1_" in f
+                if f.endswith(".npy") and "_T1_" in f
             )
 
             for img_f in img_files:
-                is_random_crop = "_rand" in img_f
+                crop_name = os.path.splitext(img_f)[0].split("_")[-1]
 
-                # for val: keep only tumor crop
-                if not self.include_random_crops and is_random_crop:
+                # validation should keep only tumor-centered crop
+                if not self.include_random_crops and crop_name != "crop":
                     continue
 
-                seg_f = img_f.replace("T1_", "seg_")
+                seg_f = img_f.replace("_T1_", "_seg_")
 
                 img_path = os.path.join(patient_folder, img_f)
                 seg_path = os.path.join(patient_folder, seg_f)
@@ -119,22 +119,25 @@ class BraTSModalDataset(Dataset):
 
     def __getitem__(self, idx: int):
         entry = self.index[idx]
+
         sample = {
-            "image": np.asarray(np.load(entry["img"]), dtype=np.float32)[None, ...],
-            "label": np.asarray(np.load(entry["seg"]), dtype=np.int64)[None, ...],
+            "image": np.load(entry["img"]).astype(np.float32)[None, ...],  # [1,H,W,D]
+            "label": np.load(entry["seg"]).astype(np.int64),               # [H,W,D]
         }
 
         if self.transformation:
             sample = self.transformation(sample)
 
-        return (
-            torch.as_tensor(sample["image"]).float(),
-            torch.as_tensor(sample["label"]).long()
-        )
+        image = torch.as_tensor(sample["image"]).float()
+        label = torch.as_tensor(sample["label"]).long()
 
-# -------------------------
-# Split (70/15/15) once, reuse across modalities
-# -------------------------
+        # MONAI may return label with channel dim after transforms
+        if label.ndim == 4 and label.shape[0] == 1:
+            label = label.squeeze(0)
+
+        return image, label
+
+
 def make_patient_splits(
     patient_folders: List[str],
     seed: int = 42
@@ -159,24 +162,24 @@ def make_patient_splits(
 
 
 def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
-
     train_patients, val_patients, test_patients = make_patient_splits(
         patient_names,
         seed=cfg.seed
     )
 
-    # train = tumor crop + random crops
-    # val = only tumor crop
     train_ds = BraTSModalDataset(
         train_patients,
         cfg.root,
         include_random_crops=True,
-        transformation=build_train_augmentations())
-    
+        transformation=None,   # as requested
+    )
+
     val_ds = BraTSModalDataset(
         val_patients,
         cfg.root,
-        include_random_crops=False)
+        include_random_crops=False,
+        transformation=None,
+    )
 
     print(f"Patients: total={len(patient_names)}")
     print(
@@ -208,5 +211,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         persistent_workers=(cfg.num_workers > 0),
     )
 
-    print(len(train_loader))
+    print(f"train batches = {len(train_loader)}")
+    print(f"val batches   = {len(val_loader)}")
+
     return train_loader, val_loader
