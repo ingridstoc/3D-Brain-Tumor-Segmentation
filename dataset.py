@@ -29,6 +29,7 @@ def build_train_augmentations():
             max_k=3,
         ),
         RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
+        RandGaussianNoised(keys=["image"], prob=0.1, std=0.01),
     ])
 class BraTSModalDataset(Dataset):
     """

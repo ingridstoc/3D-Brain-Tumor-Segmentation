@@ -1,7 +1,30 @@
 trebuie sa fiu in 3D etc... chmod +x start_runpod.sh
 root@f4a694c9f22b:~/3D-Brain-Tumor-Segmentation# ./start_runpod.sh 
 
-make it faster, make it better with fractals? features alg e tia, nu nn? 
+Things to try:
+more class-aware crops
+slightly more tumor-focused training samples
+class-weighted CE term
+T1ce / FLAIR input, which will help a lot more than T1 alone
+If you stay with T1 only, class 1 will probably remain hard.
+
+For each modality(t1, t2 etc), save:
+best model weights
+best epoch
+best val mean Dice
+val Dice per class
+
+deci dupa ce fac cate o retea pt fiecare t1, t2, etc,
+ urmeaza sa fac asta Compute validation Dice per class:va_pc = [c1, c2, c3], 
+dupa asta Convert to weights (e.g. softmax per class):weights_c = softmax(dice_values_across_modalities) pt a face ensemble ca si cum in functie de cat valoareaza fiecare dice, sa vad cat de importanta e fiecare modalitate pt fiecare clasa, nu?
+
+fac un tabel asa results = {
+    "t1":    [0.50, 0.63, 0.52],
+    "t1ce":  [0.58, 0.72, 0.55],
+    "t2":    [0.52, 0.60, 0.57],
+    "flair": [0.55, 0.65, 0.62],
+}
+
 sa verifc in documentatie cum au facut procesarile datelor
 sa salvez frumos codul si graficele de la fiecare experiment
 
