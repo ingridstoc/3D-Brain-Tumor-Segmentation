@@ -25,7 +25,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
 
-from tqdm import tqdm
 import time
 
 from monai.networks.nets import UNet
@@ -226,12 +225,12 @@ def train_one_epoch(
 
     start = perf_counter()
     for idx, (img, seg) in enumerate(train_loader):
-        if idx % 50 == 0 and idx > 0:
+        if idx % 200 == 0 and idx > 0:
             print(f"reached {idx} index")
         if idx == len(train_loader) - 1:
             end = perf_counter()
             elapsed_s = (end - start)
-            print(f"Time taken: {elapsed_s:.3f}s")
+            # print(f"Time taken: {elapsed_s:.3f}s")
 
         # -------------------------------------------------
         # apply augmentations on CPU before sending to GPU
@@ -278,11 +277,11 @@ def train_one_epoch(
     train_mean_tumor_dice = dice_sum / max(1, dice_count)
     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
 
-    print(
-        f"train_loss={train_loss:.4f} "
-        f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
-        f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
-    )
+    # print(
+    #     f"train_loss={train_loss:.4f} "
+    #     f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
+    #     f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
+    # )
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
 @torch.no_grad()
@@ -309,7 +308,7 @@ def validate_one_epoch(
         if idx == len(val_loader) - 1:
             end = perf_counter()
             elapsed_ms = (end - start)
-            print(f"Time taken: {elapsed_ms:.3f}s")
+            #print(f"Time taken: {elapsed_ms:.3f}s")
 
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
@@ -344,12 +343,12 @@ def validate_one_epoch(
     val_mean_tumor_dice = dice_sum / max(1, dice_count)
     val_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
 
-    print(
-        f"val_loss={val_loss:.4f} "
-        f"val_mean_tumor_dice={val_mean_tumor_dice:.4f} "
-        f"val_dice_per_class_mean={val_dice_per_class_mean.tolist()} "
-        f"time={elapsed_s:.3f}s"
-    )
+    # print(
+    #     f"val_loss={val_loss:.4f} "
+    #     f"val_mean_tumor_dice={val_mean_tumor_dice:.4f} "
+    #     f"val_dice_per_class_mean={val_dice_per_class_mean.tolist()} "
+    #     f"time={elapsed_s:.3f}s"
+    # )
 
     return val_loss, val_mean_tumor_dice, val_dice_per_class_mean
 
@@ -357,12 +356,12 @@ def validate_one_epoch(
 # Main pipeline
 # -------------------------
 def main(cfg : CFG):
-    print("optimizer_name:", cfg.optimizer_name)
-    print("optimizer_params:", cfg.optimizer_params)
-    print("scheduler_name:", cfg.scheduler_name)
-    print("scheduler_params:", cfg.scheduler_params)
+    #print("optimizer_name:", cfg.optimizer_name)
+    #print("optimizer_params:", cfg.optimizer_params)
+    #print("scheduler_name:", cfg.scheduler_name)
+    #print("scheduler_params:", cfg.scheduler_params)
     seed_everything(cfg.seed)
-    print("Device:", cfg.device)
+    #print("Device:", cfg.device)
     patient_names = sorted([
         os.path.join(cfg.root, d) for d in os.listdir(cfg.root)
         if os.path.isdir(os.path.join(cfg.root, d))
@@ -394,10 +393,10 @@ def main(cfg : CFG):
         )
         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
 
-        print("tr_pc =", tr_pc.tolist())
-        print("va_pc =", va_pc.tolist())
-        print("tr_dice =", tr_dice)
-        print("va_dice =", va_dice)
+        # print("tr_pc =", tr_pc.tolist())
+        # print("va_pc =", va_pc.tolist())
+        # print("tr_dice =", tr_dice)
+        # print("va_dice =", va_dice)
 
         if scheduler is not None:
             if cfg.scheduler_name == "reduce_on_plateau":

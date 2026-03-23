@@ -28,6 +28,7 @@ def build_train_augmentations():
             prob=0.3,
             max_k=3,
         ),
+        RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
     ])
 class BraTSModalDataset(Dataset):
     """
@@ -105,7 +106,7 @@ class BraTSModalDataset(Dataset):
 
         sample = {
             "image": np.load(entry["img"]).astype(np.float32)[None, ...],  # [1,H,W,D]
-            "label": np.load(entry["seg"]).astype(np.int64),               # [H,W,D]
+            "label": np.load(entry["seg"]).astype(np.int64)[None, ...],    # [1,H,W,D]
         }
 
         if self.transformation:

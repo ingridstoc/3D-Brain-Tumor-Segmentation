@@ -1,7 +1,7 @@
 root: "t1_out"
 num_classes: 4
-batch_size: 1
-num_workers: 1
+batch_size: 2 # era 1
+num_workers: 8 # era 1
 epochs: 30
 seed: 42
 include_bg_in_metric: false
