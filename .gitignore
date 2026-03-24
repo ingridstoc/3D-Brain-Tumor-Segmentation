@@ -8,3 +8,6 @@ t1_out
 cod_vechi
 .gitignore
 __pycache__
+checkpoints/
+*.pth
+*.pt

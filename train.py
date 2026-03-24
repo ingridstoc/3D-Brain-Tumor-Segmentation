@@ -387,11 +387,35 @@ def main(cfg : CFG):
 
     plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
 
+    best_val_dice = -1.0
+    best_epoch = -1
+    best_val_pc = None
+
     for epoch in range(1, cfg.epochs + 1):
         tr_loss, tr_dice, tr_pc = train_one_epoch(
             cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
         )
         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
+
+        # check if this is the best model so far
+        if va_dice > best_val_dice:
+            best_val_dice = va_dice
+            best_epoch = epoch
+            best_val_pc = va_pc.detach().cpu().tolist()
+
+            # save checkpoint
+            os.makedirs("checkpoints", exist_ok=True)
+            ckpt_path = f"checkpoints/best_model_t1.pth"
+
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "val_dice": best_val_dice,
+                "val_pc": best_val_pc,
+            }, ckpt_path)
+
+            print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
 
         # print("tr_pc =", tr_pc.tolist())
         # print("va_pc =", va_pc.tolist())
@@ -425,7 +449,11 @@ def main(cfg : CFG):
 
         print(f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
               f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}")
-
+              
+    print("\n=== BEST MODEL ===")   
+    print(f"Best epoch: {best_epoch}")
+    print(f"Best val Dice: {best_val_dice:.4f}")
+    print(f"Best per-class Dice: {best_val_pc}")
 if __name__ == "__main__":
     cfg = CFG("config.yaml")
     main(cfg)
