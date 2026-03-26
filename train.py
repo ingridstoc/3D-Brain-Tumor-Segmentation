@@ -24,7 +24,7 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
-
+import json
 import time
 
 from monai.networks.nets import UNet
@@ -36,7 +36,7 @@ from utils import (
     build_scheduler,
 )
 from time import perf_counter
-MODALITIES = ["t1"]
+# MODALITIES = ["t1"]
 import matplotlib.pyplot as plt
 
 class LivePlotter:
@@ -360,6 +360,7 @@ def main(cfg : CFG):
     #print("optimizer_params:", cfg.optimizer_params)
     #print("scheduler_name:", cfg.scheduler_name)
     #print("scheduler_params:", cfg.scheduler_params)
+    print(f"Training modality: {cfg.modality}")
     seed_everything(cfg.seed)
     #print("Device:", cfg.device)
     patient_names = sorted([
@@ -385,8 +386,12 @@ def main(cfg : CFG):
         "val_pc": [],
     }
 
-    plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
-
+    # plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
+    
+    plotter = LivePlotter(
+        num_classes=cfg.num_classes,
+        save_dir=os.path.join("live_plots", cfg.modality),
+    )
     best_val_dice = -1.0
     best_epoch = -1
     best_val_pc = None
@@ -405,7 +410,8 @@ def main(cfg : CFG):
 
             # save checkpoint
             os.makedirs("checkpoints", exist_ok=True)
-            ckpt_path = f"checkpoints/best_model_t1.pth"
+            # ckpt_path = f"checkpoints/best_model_t1.pth"
+            ckpt_path = os.path.join("checkpoints", f"best_model_{cfg.modality}.pth")
 
             torch.save({
                 "epoch": epoch,
@@ -454,6 +460,20 @@ def main(cfg : CFG):
     print(f"Best epoch: {best_epoch}")
     print(f"Best val Dice: {best_val_dice:.4f}")
     print(f"Best per-class Dice: {best_val_pc}")
+
+    os.makedirs("results", exist_ok=True)
+    summary_path = os.path.join("results", f"{cfg.modality}_best_metrics.json")
+
+    with open(summary_path, "w") as f:
+        json.dump({
+            "modality": cfg.modality,
+            "best_epoch": best_epoch,
+            "best_val_dice": best_val_dice,
+            "best_val_pc": best_val_pc,
+        }, f, indent=2)
+
+    print(f"Saved summary to {summary_path}")
+
 if __name__ == "__main__":
     cfg = CFG("config.yaml")
     main(cfg)

@@ -1,4 +1,5 @@
-root: "t1_out"
+root: "brats_crops"
+modality: "t1ce"
 num_classes: 4
 batch_size: 2 # era 1
 num_workers: 8 # era 1

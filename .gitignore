@@ -11,3 +11,4 @@ __pycache__
 checkpoints/
 *.pth
 *.pt
+brats_crops

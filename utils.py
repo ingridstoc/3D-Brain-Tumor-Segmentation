@@ -34,6 +34,7 @@ class CFG:
             data = yaml.safe_load(f)
 
         self.root = data["root"]
+        self.modality = data.get("modality", "t1").lower()
         self.num_classes = data.get("num_classes", 4)
         self.batch_size = data.get("batch_size", 1)
         self.num_workers = data.get("num_workers", 1)

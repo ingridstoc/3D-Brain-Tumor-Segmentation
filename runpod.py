@@ -322,6 +322,161 @@
 
 
 # nou multiprocess
+# from __future__ import annotations
+
+# import os
+# import sys
+# import shutil
+# import tarfile
+# from pathlib import Path
+
+# from cropping import build_crops_parallel
+
+
+# # -----------------------------
+# # Download + extract helpers
+# # -----------------------------
+# def extract_all_tars(root: Path):
+#     tars = sorted(root.rglob("*.tar"))
+#     if not tars:
+#         print(f"[extract] No .tar files found under: {root}")
+#         return
+
+#     print(f"[extract] Found {len(tars)} tar files. Extracting...")
+#     for i, tar_path in enumerate(tars, 1):
+#         out_dir = tar_path.parent
+#         print(f"  [{i}/{len(tars)}] extracting: {tar_path.name} -> {out_dir}")
+#         try:
+#             with tarfile.open(tar_path, "r:*") as tf:
+#                 tf.extractall(path=out_dir)
+#         except Exception as e:
+#             print(f"    !! Failed extracting {tar_path}: {repr(e)}")
+
+
+# def download_to_raw_folder(raw_dir: Path) -> Path:
+#     import kagglehub
+
+#     raw_dir.mkdir(parents=True, exist_ok=True)
+
+#     print("[download] kagglehub.dataset_download(...)")
+#     src = Path(kagglehub.dataset_download("dschettler8845/brats-2021-task1"))
+#     print(f"[download] kagglehub cache path: {src}")
+
+#     for item in src.iterdir():
+#         dest = raw_dir / item.name
+#         if dest.exists():
+#             continue
+#         if item.is_dir():
+#             shutil.copytree(item, dest)
+#         else:
+#             shutil.copy2(item, dest)
+
+#     return raw_dir
+
+
+# def remove_ds_store(root: Path):
+#     for p in root.rglob(".DS_Store"):
+#         try:
+#             p.unlink()
+#         except Exception:
+#             pass
+
+
+# # -----------------------------
+# # Dataset scan helper
+# # -----------------------------
+# def is_case_dir(case_dir: Path) -> bool:
+#     if not case_dir.is_dir():
+#         return False
+
+#     has_t1 = any(case_dir.glob("*t1*.nii*"))
+#     has_seg = any(case_dir.glob("*seg*.nii*"))
+#     return has_t1 and has_seg
+
+
+# def locate_case_root(raw_dir: Path) -> Path:
+#     """
+#     Return the directory whose immediate children are BraTS patient folders.
+#     """
+#     print("[scan] Locating case directories...")
+
+#     candidates = []
+
+#     for folder in raw_dir.rglob("*"):
+#         if not folder.is_dir():
+#             continue
+
+#         subdirs = [p for p in folder.iterdir() if p.is_dir()]
+#         if not subdirs:
+#             continue
+
+#         case_like = sum(1 for s in subdirs if is_case_dir(s))
+#         if case_like > 0:
+#             candidates.append((case_like, folder))
+
+#     if not candidates:
+#         print("[error] Could not find a folder that contains BraTS case directories.")
+#         sys.exit(2)
+
+#     candidates.sort(key=lambda x: x[0], reverse=True)
+#     best_count, best_folder = candidates[0]
+
+#     print(f"[scan] case root = {best_folder}")
+#     print(f"[scan] detected {best_count} case folders")
+#     return best_folder
+
+
+# # -----------------------------
+# # Main
+# # -----------------------------
+# def main():
+#     base_dir = Path(".").resolve()
+#     raw_dir = base_dir / "1"
+#     out_dir = base_dir / "t1_out"
+#     out_shape = (128, 128, 128)
+
+#     num_workers = int(os.environ.get("RUNPOD_NUM_WORKERS", min(8, os.cpu_count() or 4)))
+
+#     print(f"[paths] base_dir    = {base_dir}")
+#     print(f"[paths] raw_dir     = {raw_dir}")
+#     print(f"[paths] out_dir     = {out_dir}")
+#     print(f"[paths] out_shape   = {out_shape}")
+#     print(f"[paths] num_workers = {num_workers}")
+
+#     base_dir.mkdir(parents=True, exist_ok=True)
+#     raw_dir.mkdir(parents=True, exist_ok=True)
+#     out_dir.mkdir(parents=True, exist_ok=True)
+
+#     # 1) Download raw dataset
+#     download_to_raw_folder(raw_dir)
+
+#     # 2) Extract tar archives
+#     extract_all_tars(raw_dir)
+#     remove_ds_store(raw_dir)
+
+# # 3) Skip crop if dataset already exists
+#     existing = [p for p in out_dir.iterdir() if p.is_dir() and p.name.startswith("patient_")]
+#     if existing:
+#         print(f"[crop] Dataset already exists ({len(existing)} patients). Skipping crop step.")
+#     else:
+#         build_crops_parallel(
+#             dataset_root=raw_dir,
+#             out_dir=out_dir,
+#             out_shape=out_shape,
+#             num_workers=num_workers,
+#             debug_first_n=1,
+#             base_seed=12345,
+#         )
+
+#     print("[done] t1_out dataset ready.")
+
+
+# if __name__ == "__main__":
+#     main()
+
+
+
+
 from __future__ import annotations
 
 import os
@@ -330,7 +485,7 @@ import shutil
 import tarfile
 from pathlib import Path
 
-from cropping import build_crops_parallel
+from cropping import run as run_cropping
 
 
 # -----------------------------
@@ -390,8 +545,12 @@ def is_case_dir(case_dir: Path) -> bool:
         return False
 
     has_t1 = any(case_dir.glob("*t1*.nii*"))
+    has_t1ce = any(case_dir.glob("*t1ce*.nii*"))
+    has_t2 = any(case_dir.glob("*t2*.nii*"))
+    has_flair = any(case_dir.glob("*flair*.nii*"))
     has_seg = any(case_dir.glob("*seg*.nii*"))
-    return has_t1 and has_seg
+
+    return has_t1 and has_t1ce and has_t2 and has_flair and has_seg
 
 
 def locate_case_root(raw_dir: Path) -> Path:
@@ -426,21 +585,35 @@ def locate_case_root(raw_dir: Path) -> Path:
     return best_folder
 
 
+def cropped_dataset_exists(out_dir: Path) -> bool:
+    patient_dirs = [p for p in out_dir.iterdir() if p.is_dir() and p.name.startswith("patient_")]
+    if not patient_dirs:
+        return False
+
+    sample = patient_dirs[0]
+    needed_patterns = [
+        "*_T1_crop.npy",
+        "*_T1ce_crop.npy",
+        "*_T2_crop.npy",
+        "*_FLAIR_crop.npy",
+        "*_seg_crop.npy",
+    ]
+    return all(any(sample.glob(pattern)) for pattern in needed_patterns)
+
+
 # -----------------------------
 # Main
 # -----------------------------
 def main():
     base_dir = Path(".").resolve()
     raw_dir = base_dir / "1"
-    out_dir = base_dir / "t1_out"
-    out_shape = (128, 128, 128)
+    out_dir = base_dir / "brats_crops"
 
     num_workers = int(os.environ.get("RUNPOD_NUM_WORKERS", min(8, os.cpu_count() or 4)))
 
     print(f"[paths] base_dir    = {base_dir}")
     print(f"[paths] raw_dir     = {raw_dir}")
     print(f"[paths] out_dir     = {out_dir}")
-    print(f"[paths] out_shape   = {out_shape}")
     print(f"[paths] num_workers = {num_workers}")
 
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -454,21 +627,18 @@ def main():
     extract_all_tars(raw_dir)
     remove_ds_store(raw_dir)
 
-# 3) Skip crop if dataset already exists
-    existing = [p for p in out_dir.iterdir() if p.is_dir() and p.name.startswith("patient_")]
-    if existing:
-        print(f"[crop] Dataset already exists ({len(existing)} patients). Skipping crop step.")
-    else:
-        build_crops_parallel(
-            dataset_root=raw_dir,
-            out_dir=out_dir,
-            out_shape=out_shape,
-            num_workers=num_workers,
-            debug_first_n=1,
-            base_seed=12345,
-        )
+    # 3) Find case root
+    case_root = locate_case_root(raw_dir)
 
-    print("[done] t1_out dataset ready.")
+    # 4) Skip crop if multimodal cropped dataset already exists
+    if cropped_dataset_exists(out_dir):
+        existing = [p for p in out_dir.iterdir() if p.is_dir() and p.name.startswith("patient_")]
+        print(f"[crop] Multimodal dataset already exists ({len(existing)} patients). Skipping crop step.")
+    else:
+        print("[crop] Building multimodal cropped dataset...")
+        run_cropping(case_root, out_dir, num_workers)
+
+    print("[done] brats_crops dataset ready.")
 
 
 if __name__ == "__main__":
