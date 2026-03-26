@@ -1,5 +1,12 @@
 trebuie sa fiu in 3D etc... chmod +x start_runpod.sh
 root@f4a694c9f22b:~/3D-Brain-Tumor-Segmentation# ./start_runpod.sh 
+git clone https://github.com/ingridstoc/3D-Brain-Tumor-Segmentation.git
+
+t1ce, 3dunet results: === BEST MODEL ===
+Best epoch: 34
+Best val Dice: 0.7760
+Best per-class Dice: [0.7462994706592798, 0.718262543928073, 0.8681592426198257]
+Saved summary to results/t1ce_best_metrics.json
 
 Things to try:
 more class-aware crops
