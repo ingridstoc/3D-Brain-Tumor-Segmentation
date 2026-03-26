@@ -234,11 +234,27 @@ def _stable_seed_from_case_id(case_id: str, base_seed: int = 12345) -> int:
     return (sum(ord(c) for c in case_id) + base_seed) % (2**32 - 1)
 
 
-def _find_modality_file(case_dir: Path, keyword: str) -> Path:
-    files = sorted(case_dir.glob(f"*{keyword}*.nii*"))
-    if not files:
-        raise FileNotFoundError(f"{keyword} not found in {case_dir}")
-    return files[0]
+def _find_modality_file(case_dir: Path, modality: str) -> Path:
+    files = sorted(case_dir.glob("*.nii*"))
+    names = [p.name.lower() for p in files]
+
+    if modality == "t1":
+        matches = [p for p in files if ("t1ce" not in p.name.lower()) and ("t1" in p.name.lower())]
+    elif modality == "t1ce":
+        matches = [p for p in files if "t1ce" in p.name.lower()]
+    elif modality == "t2":
+        matches = [p for p in files if "t2" in p.name.lower()]
+    elif modality == "flair":
+        matches = [p for p in files if "flair" in p.name.lower()]
+    elif modality == "seg":
+        matches = [p for p in files if "seg" in p.name.lower()]
+    else:
+        raise ValueError(f"Unknown modality: {modality}")
+
+    if not matches:
+        raise FileNotFoundError(f"{modality} not found in {case_dir}")
+
+    return sorted(matches)[0]
 
 
 def process_case_from_disk(

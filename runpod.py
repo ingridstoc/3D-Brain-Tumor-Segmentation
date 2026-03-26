@@ -544,45 +544,40 @@ def is_case_dir(case_dir: Path) -> bool:
     if not case_dir.is_dir():
         return False
 
-    has_t1 = any(case_dir.glob("*t1*.nii*"))
-    has_t1ce = any(case_dir.glob("*t1ce*.nii*"))
-    has_t2 = any(case_dir.glob("*t2*.nii*"))
-    has_flair = any(case_dir.glob("*flair*.nii*"))
-    has_seg = any(case_dir.glob("*seg*.nii*"))
+    nii_files = list(case_dir.glob("*.nii*"))
+    if not nii_files:
+        return False
+
+    names = [p.name.lower() for p in nii_files]
+
+    has_t1 = any("t1." in n or "_t1" in n for n in names)
+    has_t1ce = any("t1ce" in n for n in names)
+    has_t2 = any("t2." in n or "_t2" in n for n in names)
+    has_flair = any("flair" in n for n in names)
+    has_seg = any("seg" in n for n in names)
 
     return has_t1 and has_t1ce and has_t2 and has_flair and has_seg
 
 
 def locate_case_root(raw_dir: Path) -> Path:
-    """
-    Return the directory whose immediate children are BraTS patient folders.
-    """
     print("[scan] Locating case directories...")
 
-    candidates = []
+    # First try: directories that are themselves case dirs
+    direct_case_dirs = [p for p in raw_dir.rglob("*") if is_case_dir(p)]
+    if direct_case_dirs:
+        parent_counts = {}
+        for case_dir in direct_case_dirs:
+            parent_counts[case_dir.parent] = parent_counts.get(case_dir.parent, 0) + 1
 
-    for folder in raw_dir.rglob("*"):
-        if not folder.is_dir():
-            continue
+        best_folder = max(parent_counts, key=parent_counts.get)
+        best_count = parent_counts[best_folder]
 
-        subdirs = [p for p in folder.iterdir() if p.is_dir()]
-        if not subdirs:
-            continue
+        print(f"[scan] case root = {best_folder}")
+        print(f"[scan] detected {best_count} case folders")
+        return best_folder
 
-        case_like = sum(1 for s in subdirs if is_case_dir(s))
-        if case_like > 0:
-            candidates.append((case_like, folder))
-
-    if not candidates:
-        print("[error] Could not find a folder that contains BraTS case directories.")
-        sys.exit(2)
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    best_count, best_folder = candidates[0]
-
-    print(f"[scan] case root = {best_folder}")
-    print(f"[scan] detected {best_count} case folders")
-    return best_folder
+    print("[error] Could not find a folder that contains BraTS case directories.")
+    sys.exit(2)
 
 
 def cropped_dataset_exists(out_dir: Path) -> bool:
