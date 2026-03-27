@@ -206,6 +206,93 @@ def dice_from_logits(
     return dice, mean_dice
 
 
+# def train_one_epoch(
+#     cfg: CFG,
+#     model: nn.Module,
+#     train_loader: DataLoader,
+#     optimizer,
+#     scaler: torch.amp.GradScaler
+# ):
+#     model.train()
+#     running_loss = 0.0
+#     dice_sum = 0.0
+#     dice_count = 0
+
+#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
+#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     eps = 1e-6
+
+#     start = perf_counter()
+#     for idx, (img, seg) in enumerate(train_loader):
+#         if idx % 200 == 0 and idx > 0:
+#             print(f"reached {idx} index")
+#         if idx == len(train_loader) - 1:
+#             end = perf_counter()
+#             elapsed_s = (end - start)
+#             # print(f"Time taken: {elapsed_s:.3f}s")
+
+#         # -------------------------------------------------
+#         # apply augmentations on CPU before sending to GPU
+#         # img expected shape [B,1,H,W,D]
+#         # seg expected shape [B,H,W,D]
+#         # -------------------------------------------------
+#         img = img.to(cfg.device, non_blocking=True)
+#         seg = seg.to(cfg.device, non_blocking=True)
+
+#         # MONAI DiceCELoss with to_onehot_y=True expects target shape [B,1,H,W,D]
+#         seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
+
+#         optimizer.zero_grad(set_to_none=True)
+
+#         with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
+#             logits = model(img)
+#             loss = cfg.loss_fn(logits, seg_for_loss)
+#         if not torch.isfinite(img).all():
+#             print("Non-finite image detected")
+#             print("img min/max:", img.min().item(), img.max().item())
+#             raise RuntimeError("Image contains NaN or inf")
+
+#         if not torch.isfinite(seg).all():
+#             print("Non-finite seg detected")
+#             raise RuntimeError("Seg contains NaN or inf")
+
+#         if scaler is not None and scaler.is_enabled():
+#             scaler.scale(loss).backward()
+#             scaler.step(optimizer)
+#             scaler.update()
+#         else:
+#             loss.backward()
+#             optimizer.step()
+#         running_loss += float(loss.item())
+
+#         dice_per_class, mean_dice = dice_from_logits(
+#             logits,
+#             seg,
+#             cfg.num_classes,
+#             cfg.include_bg_in_metric
+#         )
+#         dice_sum += torch.nansum(mean_dice).item()
+#         dice_count += (~torch.isnan(mean_dice)).sum().item()
+
+#         d_compact = dice_per_class[:, 1:].detach().cpu().double()
+#         valid = ~torch.isnan(d_compact)
+
+#         per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
+#         per_class_count += valid.sum(dim=0).double()
+
+#     train_loss = running_loss / max(1, len(train_loader))
+#     train_mean_tumor_dice = dice_sum / max(1, dice_count)
+#     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
+
+#     # print(
+#     #     f"train_loss={train_loss:.4f} "
+#     #     f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
+#     #     f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
+#     # )
+#     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
+
+
 def train_one_epoch(
     cfg: CFG,
     model: nn.Module,
@@ -221,41 +308,66 @@ def train_one_epoch(
     num_plot_classes = cfg.num_classes - 1  # classes 1..3
     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
-    eps = 1e-6
 
     start = perf_counter()
+
     for idx, (img, seg) in enumerate(train_loader):
         if idx % 200 == 0 and idx > 0:
             print(f"reached {idx} index")
+
         if idx == len(train_loader) - 1:
             end = perf_counter()
             elapsed_s = (end - start)
             # print(f"Time taken: {elapsed_s:.3f}s")
 
-        # -------------------------------------------------
-        # apply augmentations on CPU before sending to GPU
-        # img expected shape [B,1,H,W,D]
-        # seg expected shape [B,H,W,D]
-        # -------------------------------------------------
         img = img.to(cfg.device, non_blocking=True)
         seg = seg.to(cfg.device, non_blocking=True)
 
-        # MONAI DiceCELoss with to_onehot_y=True expects target shape [B,1,H,W,D]
+        # checks before forward
+        if not torch.isfinite(img).all():
+            print(f"[batch {idx}] Non-finite image detected before forward")
+            print("img min/max:", img.min().item(), img.max().item())
+            raise RuntimeError("Image contains NaN or inf")
+
+        if not torch.isfinite(seg).all():
+            print(f"[batch {idx}] Non-finite seg detected before forward")
+            raise RuntimeError("Seg contains NaN or inf")
+
+        # MONAI DiceCELoss with to_onehot_y=True expects [B,1,H,W,D]
         seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
 
         optimizer.zero_grad(set_to_none=True)
 
-        with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
+        # DEBUG MODE: autocast disabled
+        with torch.autocast(device_type="cuda", enabled=False):
             logits = model(img)
             loss = cfg.loss_fn(logits, seg_for_loss)
 
+        # checks after forward
+        if not torch.isfinite(logits).all():
+            print(f"[batch {idx}] Non-finite logits detected")
+            print("img min/max:", img.min().item(), img.max().item())
+            print("seg unique:", torch.unique(seg))
+            raise RuntimeError("Logits contain NaN or inf")
+
+        if not torch.isfinite(loss):
+            print(f"[batch {idx}] Non-finite loss detected")
+            print("img min/max:", img.min().item(), img.max().item())
+            print("seg unique:", torch.unique(seg))
+            raise RuntimeError("Loss is NaN or inf")
+
+        # backward + gradient clipping
         if scaler is not None and scaler.is_enabled():
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+
         running_loss += float(loss.item())
 
         dice_per_class, mean_dice = dice_from_logits(
@@ -264,6 +376,7 @@ def train_one_epoch(
             cfg.num_classes,
             cfg.include_bg_in_metric
         )
+
         dice_sum += torch.nansum(mean_dice).item()
         dice_count += (~torch.isnan(mean_dice)).sum().item()
 
@@ -277,11 +390,6 @@ def train_one_epoch(
     train_mean_tumor_dice = dice_sum / max(1, dice_count)
     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
 
-    # print(
-    #     f"train_loss={train_loss:.4f} "
-    #     f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
-    #     f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
-    # )
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
 @torch.no_grad()
@@ -374,8 +482,8 @@ def main(cfg : CFG):
     model = model.to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
-    #scaler = torch.amp.GradScaler('cuda')
-    scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
+    #scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
+    scaler=None
 
     history : Dict[str, List] = {
         "train_loss": [],

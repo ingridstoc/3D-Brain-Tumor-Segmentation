@@ -216,7 +216,7 @@ from monai.transforms import (
     Compose,
     RandFlipd,
     RandRotate90d,
-    RandShiftIntensityd,
+    #RandShiftIntensityd,
 )
 
 
@@ -230,7 +230,7 @@ def build_train_augmentations():
             prob=0.3,
             max_k=3,
         ),
-        RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
+        #RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
     ])
 
 
