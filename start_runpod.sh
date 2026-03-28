@@ -10,5 +10,5 @@ git config user.name ingridstoc
 
 export RUNPOD_NUM_WORKERS=8
 python3 runpod.py
-python3 train.py
+# python3 train.py
 
