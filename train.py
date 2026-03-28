@@ -463,63 +463,193 @@ def validate_one_epoch(
 # -------------------------
 # Main pipeline
 # -------------------------
-def main(cfg : CFG):
-    #print("optimizer_name:", cfg.optimizer_name)
-    #print("optimizer_params:", cfg.optimizer_params)
-    #print("scheduler_name:", cfg.scheduler_name)
-    #print("scheduler_params:", cfg.scheduler_params)
+# def main(cfg : CFG):
+#     #print("optimizer_name:", cfg.optimizer_name)
+#     #print("optimizer_params:", cfg.optimizer_params)
+#     #print("scheduler_name:", cfg.scheduler_name)
+#     #print("scheduler_params:", cfg.scheduler_params)
+#     print(f"Training modality: {cfg.modality}")
+#     seed_everything(cfg.seed)
+#     #print("Device:", cfg.device)
+#     patient_names = sorted([
+#         os.path.join(cfg.root, d) for d in os.listdir(cfg.root)
+#         if os.path.isdir(os.path.join(cfg.root, d))
+#     ])
+#     train_loader, val_loader = build_loaders_for_modality(
+#         cfg=cfg, patient_names=patient_names)
+    
+#     model = build_unet_3d(num_classes=cfg.num_classes)
+#     model = model.to(cfg.device)
+#     optimizer = build_optimizer(cfg, model)
+#     scheduler = build_scheduler(cfg, optimizer)
+#     #scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
+#     scaler=None
+
+#     history : Dict[str, List] = {
+#         "train_loss": [],
+#         "val_loss": [],
+#         "train_dice": [],
+#         "val_dice": [],
+#         "train_pc": [],  # list of list len C
+#         "val_pc": [],
+#     }
+
+#     # plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
+    
+#     plotter = LivePlotter(
+#         num_classes=cfg.num_classes,
+#         save_dir=os.path.join("live_plots", cfg.modality),
+#     )
+#     best_val_dice = -1.0
+#     best_epoch = -1
+#     best_val_pc = None
+
+#     for epoch in range(1, cfg.epochs + 1):
+#         tr_loss, tr_dice, tr_pc = train_one_epoch(
+#             cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
+#         )
+#         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
+
+#         # check if this is the best model so far
+#         if va_dice > best_val_dice:
+#             best_val_dice = va_dice
+#             best_epoch = epoch
+#             best_val_pc = va_pc.detach().cpu().tolist()
+
+#             # save checkpoint
+#             os.makedirs("checkpoints", exist_ok=True)
+#             # ckpt_path = f"checkpoints/best_model_t1.pth"
+#             ckpt_path = os.path.join("checkpoints", f"best_model_{cfg.modality}.pth")
+
+#             torch.save({
+#                 "epoch": epoch,
+#                 "model_state_dict": model.state_dict(),
+#                 "optimizer_state_dict": optimizer.state_dict(),
+#                 "val_dice": best_val_dice,
+#                 "val_pc": best_val_pc,
+#             }, ckpt_path)
+
+#             print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
+
+#         # print("tr_pc =", tr_pc.tolist())
+#         # print("va_pc =", va_pc.tolist())
+#         # print("tr_dice =", tr_dice)
+#         # print("va_dice =", va_dice)
+
+#         if scheduler is not None:
+#             if cfg.scheduler_name == "reduce_on_plateau":
+#                 scheduler.step(va_loss)
+#             else:
+#                 scheduler.step()
+        
+#         history["train_loss"].append(tr_loss)
+#         history["val_loss"].append(va_loss)
+#         history["train_dice"].append(tr_dice)
+#         history["val_dice"].append(va_dice)
+
+#         # tensors -> python lists
+#         history["train_pc"].append(tr_pc.detach().cpu().tolist())
+#         history["val_pc"].append(va_pc.detach().cpu().tolist())
+
+#         plotter.update(
+#             epochs_done=epoch,
+#             train_loss=history["train_loss"],
+#             val_loss=history["val_loss"],
+#             train_dice=history["train_dice"],
+#             val_dice=history["val_dice"],
+#             train_pc=history["train_pc"],
+#             val_pc=history["val_pc"],
+#         )
+
+#         print(f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
+#               f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}")
+              
+#     print("\n=== BEST MODEL ===")   
+#     print(f"Best epoch: {best_epoch}")
+#     print(f"Best val Dice: {best_val_dice:.4f}")
+#     print(f"Best per-class Dice: {best_val_pc}")
+
+#     os.makedirs("results", exist_ok=True)
+#     summary_path = os.path.join("results", f"{cfg.modality}_best_metrics.json")
+
+#     with open(summary_path, "w") as f:
+#         json.dump({
+#             "modality": cfg.modality,
+#             "best_epoch": best_epoch,
+#             "best_val_dice": best_val_dice,
+#             "best_val_pc": best_val_pc,
+#         }, f, indent=2)
+
+#     print(f"Saved summary to {summary_path}")
+
+
+import json
+import os
+from typing import Dict, List
+
+
+def main(cfg: CFG):
     print(f"Training modality: {cfg.modality}")
     seed_everything(cfg.seed)
-    #print("Device:", cfg.device)
+
     patient_names = sorted([
         os.path.join(cfg.root, d) for d in os.listdir(cfg.root)
         if os.path.isdir(os.path.join(cfg.root, d))
     ])
+
     train_loader, val_loader = build_loaders_for_modality(
-        cfg=cfg, patient_names=patient_names)
-    
-    model = build_unet_3d(num_classes=cfg.num_classes)
-    model = model.to(cfg.device)
+        cfg=cfg, patient_names=patient_names
+    )
+
+    model = build_unet_3d(num_classes=cfg.num_classes).to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
-    #scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
-    scaler=None
+    scaler = None
 
-    history : Dict[str, List] = {
+    run_name = getattr(cfg, "run_name", cfg.modality)
+
+    history: Dict[str, List] = {
         "train_loss": [],
         "val_loss": [],
         "train_dice": [],
         "val_dice": [],
-        "train_pc": [],  # list of list len C
+        "train_pc": [],
         "val_pc": [],
     }
 
-    # plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
-    
     plotter = LivePlotter(
         num_classes=cfg.num_classes,
-        save_dir=os.path.join("live_plots", cfg.modality),
+        save_dir=os.path.join("live_plots", run_name),
     )
+
     best_val_dice = -1.0
     best_epoch = -1
     best_val_pc = None
+    best_val_loss = None
 
     for epoch in range(1, cfg.epochs + 1):
         tr_loss, tr_dice, tr_pc = train_one_epoch(
-            cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
+            cfg=cfg,
+            model=model,
+            train_loader=train_loader,
+            optimizer=optimizer,
+            scaler=scaler,
         )
-        va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
 
-        # check if this is the best model so far
+        va_loss, va_dice, va_pc = validate_one_epoch(
+            cfg=cfg,
+            model=model,
+            val_loader=val_loader,
+        )
+
         if va_dice > best_val_dice:
             best_val_dice = va_dice
             best_epoch = epoch
             best_val_pc = va_pc.detach().cpu().tolist()
+            best_val_loss = va_loss
 
-            # save checkpoint
             os.makedirs("checkpoints", exist_ok=True)
-            # ckpt_path = f"checkpoints/best_model_t1.pth"
-            ckpt_path = os.path.join("checkpoints", f"best_model_{cfg.modality}.pth")
+            ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
 
             torch.save({
                 "epoch": epoch,
@@ -527,27 +657,21 @@ def main(cfg : CFG):
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_dice": best_val_dice,
                 "val_pc": best_val_pc,
+                "val_loss": best_val_loss,
             }, ckpt_path)
 
             print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
-
-        # print("tr_pc =", tr_pc.tolist())
-        # print("va_pc =", va_pc.tolist())
-        # print("tr_dice =", tr_dice)
-        # print("va_dice =", va_dice)
 
         if scheduler is not None:
             if cfg.scheduler_name == "reduce_on_plateau":
                 scheduler.step(va_loss)
             else:
                 scheduler.step()
-        
+
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(va_loss)
         history["train_dice"].append(tr_dice)
         history["val_dice"].append(va_dice)
-
-        # tensors -> python lists
         history["train_pc"].append(tr_pc.detach().cpu().tolist())
         history["val_pc"].append(va_pc.detach().cpu().tolist())
 
@@ -561,26 +685,43 @@ def main(cfg : CFG):
             val_pc=history["val_pc"],
         )
 
-        print(f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
-              f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}")
-              
-    print("\n=== BEST MODEL ===")   
+        print(
+            f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
+            f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}"
+        )
+
+    print("\n=== BEST MODEL ===")
     print(f"Best epoch: {best_epoch}")
     print(f"Best val Dice: {best_val_dice:.4f}")
     print(f"Best per-class Dice: {best_val_pc}")
 
     os.makedirs("results", exist_ok=True)
-    summary_path = os.path.join("results", f"{cfg.modality}_best_metrics.json")
+    summary_path = os.path.join("results", f"{run_name}_best_metrics.json")
 
     with open(summary_path, "w") as f:
         json.dump({
+            "run_name": run_name,
             "modality": cfg.modality,
             "best_epoch": best_epoch,
             "best_val_dice": best_val_dice,
+            "best_val_loss": best_val_loss,
             "best_val_pc": best_val_pc,
+            "history": history,
         }, f, indent=2)
 
     print(f"Saved summary to {summary_path}")
+
+    return {
+        "run_name": run_name,
+        "modality": cfg.modality,
+        "best_epoch": best_epoch,
+        "best_val_dice": best_val_dice,
+        "best_val_loss": best_val_loss,
+        "best_val_pc": best_val_pc,
+        "final_val_dice": history["val_dice"][-1] if history["val_dice"] else None,
+        "final_val_loss": history["val_loss"][-1] if history["val_loss"] else None,
+    }
+
 
 if __name__ == "__main__":
     cfg = CFG("config.yaml")

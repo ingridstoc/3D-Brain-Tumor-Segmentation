@@ -220,18 +220,85 @@ from monai.transforms import (
 )
 
 
-def build_train_augmentations():
-    return Compose([
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
-        RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
-        RandRotate90d(
-            keys=["image", "label"],
-            prob=0.3,
-            max_k=3,
-        ),
-        #RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
-    ])
+# def build_train_augmentations():
+#     return Compose([
+#         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+#         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+#         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+#         RandRotate90d(
+#             keys=["image", "label"],
+#             prob=0.3,
+#             max_k=3,
+#         ),
+#         #RandShiftIntensityd(keys=["image"], prob=0.1, offsets=0.05),
+#     ])
+
+
+from monai.transforms import (
+    Compose,
+    RandFlipd,
+    RandRotate90d,
+    RandAffined,
+    RandScaleIntensityd,
+    RandShiftIntensityd,
+    RandGaussianNoised,
+    RandBiasFieldd,
+)
+
+
+def build_train_augmentations(level: str):
+    level = level.lower()
+
+    if level == "none":
+        return None
+
+    if level == "light":
+        return Compose([
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+            RandRotate90d(keys=["image", "label"], prob=0.3, max_k=3),
+        ])
+
+    if level == "medium":
+        return Compose([
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+            RandRotate90d(keys=["image", "label"], prob=0.3, max_k=3),
+            RandAffined(
+                keys=["image", "label"],
+                prob=0.25,
+                rotate_range=(0.1, 0.1, 0.1),
+                scale_range=(0.1, 0.1, 0.1),
+                mode=("bilinear", "nearest"),
+                padding_mode="border",
+            ),
+            RandScaleIntensityd(keys=["image"], prob=0.2, factors=0.1),
+            RandShiftIntensityd(keys=["image"], prob=0.2, offsets=0.1),
+        ])
+
+    if level == "strong":
+        return Compose([
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
+            RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
+            RandRotate90d(keys=["image", "label"], prob=0.4, max_k=3),
+            RandAffined(
+                keys=["image", "label"],
+                prob=0.35,
+                rotate_range=(0.15, 0.15, 0.15),
+                scale_range=(0.15, 0.15, 0.15),
+                mode=("bilinear", "nearest"),
+                padding_mode="border",
+            ),
+            RandScaleIntensityd(keys=["image"], prob=0.25, factors=0.15),
+            RandShiftIntensityd(keys=["image"], prob=0.25, offsets=0.1),
+            RandGaussianNoised(keys=["image"], prob=0.15, mean=0.0, std=0.05),
+            RandBiasFieldd(keys=["image"], prob=0.15),
+        ])
+
+    raise ValueError(f"Unknown augmentation preset: {level}")
 
 
 class BraTSModalDataset(Dataset):
@@ -369,7 +436,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         cfg.root,
         modality=cfg.modality,
         include_random_crops=True,
-        transformation=build_train_augmentations(),
+        transformation=build_train_augmentations(cfg.augmentation_name),
     )
 
     val_ds = BraTSModalDataset(

@@ -14,6 +14,60 @@ def seed_everything(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
 
 
+# def make_loss(loss_cfg: dict):
+#     loss_name = loss_cfg["name"].lower()
+
+#     if loss_name == "dice_ce":
+#         return DiceCELoss(
+#             to_onehot_y=loss_cfg.get("to_onehot_y", True),
+#             softmax=loss_cfg.get("softmax", True),
+#             lambda_dice=loss_cfg.get("lambda_dice", 1.0),
+#             lambda_ce=loss_cfg.get("lambda_ce", 1.0),
+#         )
+
+#     raise ValueError(f"Unknown loss name: {loss_name}")
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from monai.losses import DiceCELoss, DiceFocalLoss, GeneralizedDiceLoss
+
+
+class GeneralizedDiceCELoss(nn.Module):
+    def __init__(
+        self,
+        to_onehot_y=True,
+        softmax=True,
+        lambda_gdice=1.0,
+        lambda_ce=1.0,
+    ):
+        super().__init__()
+        self.to_onehot_y = to_onehot_y
+        self.softmax = softmax
+        self.lambda_gdice = lambda_gdice
+        self.lambda_ce = lambda_ce
+
+        self.gdice = GeneralizedDiceLoss(
+            to_onehot_y=to_onehot_y,
+            softmax=softmax,
+        )
+        self.ce = nn.CrossEntropyLoss()
+
+    def forward(self, logits, target):
+        gdice_loss = self.gdice(logits, target)
+
+        if target.ndim == 5 and target.shape[1] == 1:
+            ce_target = target[:, 0].long()
+        else:
+            ce_target = target.long()
+
+        ce_loss = self.ce(logits, ce_target)
+
+        return self.lambda_gdice * gdice_loss + self.lambda_ce * ce_loss
+
+
 def make_loss(loss_cfg: dict):
     loss_name = loss_cfg["name"].lower()
 
@@ -25,13 +79,74 @@ def make_loss(loss_cfg: dict):
             lambda_ce=loss_cfg.get("lambda_ce", 1.0),
         )
 
+    if loss_name == "dice_focal":
+        return DiceFocalLoss(
+            to_onehot_y=loss_cfg.get("to_onehot_y", True),
+            softmax=loss_cfg.get("softmax", True),
+            lambda_dice=loss_cfg.get("lambda_dice", 1.0),
+            lambda_focal=loss_cfg.get("lambda_focal", 1.0),
+            gamma=loss_cfg.get("gamma", 2.0),
+        )
+
+    if loss_name == "generalized_dice_ce":
+        return GeneralizedDiceCELoss(
+            to_onehot_y=loss_cfg.get("to_onehot_y", True),
+            softmax=loss_cfg.get("softmax", True),
+            lambda_gdice=loss_cfg.get("lambda_gdice", 1.0),
+            lambda_ce=loss_cfg.get("lambda_ce", 1.0),
+        )
+
     raise ValueError(f"Unknown loss name: {loss_name}")
 
 
+
+# class CFG:
+#     def __init__(self, path: str):
+#         with open(path, "r") as f:
+#             data = yaml.safe_load(f)
+
+#         self.root = data["root"]
+#         self.modality = data.get("modality", "t1").lower()
+#         self.num_classes = data.get("num_classes", 4)
+#         self.batch_size = data.get("batch_size", 1)
+#         self.num_workers = data.get("num_workers", 1)
+#         self.epochs = data.get("epochs", 1)
+#         self.seed = data.get("seed", 42)
+#         self.include_bg_in_metric = data.get("include_bg_in_metric", False)
+
+#         device_value = data.get("device", "auto")
+#         if device_value == "auto":
+#             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         else:
+#             self.device = torch.device(device_value)
+
+#         optimizer_cfg = data.get("optimizer", {})
+#         self.optimizer_name = optimizer_cfg.get("name", "adamw").lower()
+#         self.optimizer_params = optimizer_cfg.get(self.optimizer_name, {})
+
+#         scheduler_cfg = data.get("scheduler", {})
+#         self.scheduler_name = scheduler_cfg.get("name", "none").lower()
+#         self.scheduler_params = scheduler_cfg.get(self.scheduler_name, {})
+
+#         self.loss_cfg = data.get("loss", {"name": "dice_ce"})
+#         self.loss_fn = make_loss(self.loss_cfg)
+
+
+import yaml
+import torch
+
+
 class CFG:
-    def __init__(self, path: str):
-        with open(path, "r") as f:
-            data = yaml.safe_load(f)
+    def __init__(self, source):
+        if isinstance(source, str):
+            with open(source, "r") as f:
+                data = yaml.safe_load(f)
+        elif isinstance(source, dict):
+            data = source
+        else:
+            raise ValueError("CFG source must be a yaml path or a dict")
+
+        self.raw = data
 
         self.root = data["root"]
         self.modality = data.get("modality", "t1").lower()
@@ -58,6 +173,11 @@ class CFG:
 
         self.loss_cfg = data.get("loss", {"name": "dice_ce"})
         self.loss_fn = make_loss(self.loss_cfg)
+
+        aug_cfg = data.get("augmentations", {})
+        self.augmentation_name = aug_cfg.get("name", "none").lower()
+
+        self.random_search = data.get("random_search", {})
 
 
 def build_optimizer(cfg, model):

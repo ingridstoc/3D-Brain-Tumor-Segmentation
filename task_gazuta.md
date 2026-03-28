@@ -1,6 +1,10 @@
 trebuie sa fiu in 3D etc... chmod +x start_runpod.sh
 root@f4a694c9f22b:~/3D-Brain-Tumor-Segmentation# ./start_runpod.sh 
 git clone https://github.com/ingridstoc/3D-Brain-Tumor-Segmentation.git
+scp *.pth root@69.30.85.204:/root/3D-Brain-Tumor-Segmentation
+
+schimb lr, oprimizator, scheduler, loss fct, 
+adaug early stopper
 
 t1ce, 3dunet results: === BEST MODEL ===
 Best epoch: 34
