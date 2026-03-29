@@ -1,0 +1,111 @@
+root: brats_crops
+modality: t1
+num_classes: 4
+batch_size: 2
+num_workers: 8
+epochs: 12
+seed: 42
+include_bg_in_metric: false
+device: auto
+optimizer:
+  name: rmsprop
+  adamw:
+    lr: 0.0003
+    weight_decay: 0.0001
+  adam:
+    lr: 0.0003
+    weight_decay: 0.0001
+  rmsprop:
+    lr: 0.0001
+    momentum: 0.9
+    weight_decay: 0.0
+scheduler:
+  name: cosine_warm_restarts
+  reduce_on_plateau:
+    mode: min
+    factor: 0.5
+    patience: 3
+    threshold: 0.0001
+    min_lr: 1.0e-06
+  cosine:
+    T_max: 35
+    eta_min: 1.0e-06
+  cosine_warm_restarts:
+    T_0: 10
+    T_mult: 2
+    eta_min: 1.0e-06
+  none: {}
+loss:
+  name: generalized_dice_ce
+  lambda_gdice: 1.0
+  lambda_ce: 1.0
+  to_onehot_y: true
+  softmax: true
+augmentations:
+  name: light
+random_search:
+  enabled: true
+  n_trials: 16
+  save_dir: random_search_results
+  search_space:
+    optimizer_names:
+    - adamw
+    - adam
+    - rmsprop
+    lr:
+    - 0.0001
+    - 0.0002
+    - 0.0003
+    - 0.0005
+    - 0.001
+    weight_decay:
+    - 0.0
+    - 1.0e-05
+    - 0.0001
+    loss_names:
+    - dice_ce
+    - dice_focal
+    - generalized_dice_ce
+    scheduler_names:
+    - reduce_on_plateau
+    - cosine
+    - cosine_warm_restarts
+    - none
+    augmentation_names:
+    - none
+    - light
+    - medium
+    - strong
+  fixed_scheduler_params:
+    reduce_on_plateau:
+      mode: min
+      factor: 0.5
+      patience: 3
+      threshold: 0.0001
+      min_lr: 1.0e-06
+    cosine:
+      T_max: 35
+      eta_min: 1.0e-06
+    cosine_warm_restarts:
+      T_0: 10
+      T_mult: 2
+      eta_min: 1.0e-06
+    none: {}
+  fixed_loss_params:
+    dice_ce:
+      lambda_dice: 1.0
+      lambda_ce: 1.0
+      to_onehot_y: true
+      softmax: true
+    dice_focal:
+      lambda_dice: 1.0
+      lambda_focal: 1.0
+      to_onehot_y: true
+      softmax: true
+      gamma: 2.0
+    generalized_dice_ce:
+      lambda_gdice: 1.0
+      lambda_ce: 1.0
+      to_onehot_y: true
+      softmax: true
+run_name: t1_trial_011_opt-rmsprop_lr-0.0001_wd-0.0_loss-generalized_dice_ce_sch-cosine_warm_restarts_aug-light
