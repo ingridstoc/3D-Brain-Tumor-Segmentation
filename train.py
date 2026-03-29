@@ -1,21 +1,3 @@
-"""
-BraTS 4-modality training pipeline (4 separate identical 3D UNets)
-- One model per modality: t1, t1ce, t2, flair
-- Input patch: 128x128x128 (tumor-aware random crop)
-- Output: logits [B,4,128,128,128] for classes {0,1,2,3} where 3 == original label 4
-- Loss: Dice + CE (MONAI DiceCELoss)
-- Optimizer: AdamW
-- Train/val split: 70/15/15 of valid patients
-- Train 30 epochs and save best checkpoint per modality by mean tumor Dice on validation
-- After all trainings:
-    * compute val Dice per class for each modality model
-    * build class-wise weights W (softmax over modalities per class)
-    * save W + dice table to disk for reuse in testing/inference
-
-Requirements:
-pip install nibabel monai torch tqdm
-"""
-
 from __future__ import annotations
 
 import os
