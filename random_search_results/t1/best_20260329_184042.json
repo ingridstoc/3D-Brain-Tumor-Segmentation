@@ -1,0 +1,15 @@
+{
+  "run_name": "t1_trial_001_opt-adam_lr-0.0001_loss-dice_focal_sch-cosine_aug-light",
+  "modality": "t1",
+  "best_epoch": 15,
+  "best_val_dice": 0.5519853357604162,
+  "best_val_loss": 0.36707548669634016,
+  "best_val_pc": [
+    0.47116460150463335,
+    0.6451231063064955,
+    0.5423053353843852
+  ],
+  "final_val_dice": 0.5519853357604162,
+  "final_val_loss": 0.36707548669634016,
+  "config_name": "t1_trial_001_opt-adam_lr-0.0001_loss-dice_focal_sch-cosine_aug-light"
+}

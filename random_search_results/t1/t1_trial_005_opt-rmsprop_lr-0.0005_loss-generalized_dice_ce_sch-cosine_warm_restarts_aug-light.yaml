@@ -1,0 +1,28 @@
+root: brats_crops
+modality: t1
+run_name: t1_trial_005_opt-rmsprop_lr-0.0005_loss-generalized_dice_ce_sch-cosine_warm_restarts_aug-light
+num_classes: 4
+batch_size: 2
+num_workers: 8
+epochs: 15
+seed: 42
+include_bg_in_metric: false
+device: cuda
+optimizer:
+  lr: 0.0005
+  momentum: 0.9
+  weight_decay: 0.0001
+  name: rmsprop
+scheduler:
+  T_0: 10
+  T_mult: 2
+  eta_min: 1.0e-06
+  name: cosine_warm_restarts
+loss:
+  lambda_gdice: 1.0
+  lambda_ce: 1.0
+  to_onehot_y: true
+  softmax: true
+  name: generalized_dice_ce
+augmentations:
+  name: light

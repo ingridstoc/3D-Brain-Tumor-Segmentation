@@ -1,0 +1,30 @@
+root: brats_crops
+modality: t1
+run_name: t1_trial_002_opt-adam_lr-0.001_loss-dice_focal_sch-reduce_on_plateau_aug-medium
+num_classes: 4
+batch_size: 2
+num_workers: 8
+epochs: 15
+seed: 42
+include_bg_in_metric: false
+device: cuda
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0001
+  name: adam
+scheduler:
+  mode: min
+  factor: 0.5
+  patience: 3
+  threshold: 0.0001
+  min_lr: 1.0e-06
+  name: reduce_on_plateau
+loss:
+  lambda_dice: 1.0
+  lambda_focal: 1.0
+  to_onehot_y: true
+  softmax: true
+  gamma: 2.0
+  name: dice_focal
+augmentations:
+  name: medium

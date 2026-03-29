@@ -1,0 +1,28 @@
+root: brats_crops
+modality: t1
+run_name: t1_trial_003_opt-adamw_lr-0.0005_loss-dice_focal_sch-cosine_warm_restarts_aug-light
+num_classes: 4
+batch_size: 2
+num_workers: 8
+epochs: 15
+seed: 42
+include_bg_in_metric: false
+device: cuda
+optimizer:
+  lr: 0.0005
+  weight_decay: 0.0001
+  name: adamw
+scheduler:
+  T_0: 10
+  T_mult: 2
+  eta_min: 1.0e-06
+  name: cosine_warm_restarts
+loss:
+  lambda_dice: 1.0
+  lambda_focal: 1.0
+  to_onehot_y: true
+  softmax: true
+  gamma: 2.0
+  name: dice_focal
+augmentations:
+  name: light

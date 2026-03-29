@@ -70,6 +70,7 @@ class CFG:
 
         self.root = data["root"]
         self.modality = data.get("modality", "t1").lower()
+        self.run_name = data.get("run_name", self.modality)
         self.num_classes = data.get("num_classes", 4)
         self.batch_size = data.get("batch_size", 1)
         self.num_workers = data.get("num_workers", 1)
@@ -95,35 +96,37 @@ class CFG:
         loss_cfg = data.get("loss", {})
         self.loss_name = loss_cfg.get("name", "dice_ce").lower()
         self.loss_params = loss_cfg.get(self.loss_name, {})
-        self.loss_fn = make_loss(loss_cfg)
+        self.loss_params["name"] = self.loss_name
+        self.loss_fn = make_loss(self.loss_params)
 
         aug_cfg = data.get("augmentations", {})
         self.augmentation_name = aug_cfg.get("name", "none").lower()
-
     def print_parameters(self) -> dict:
-        optimizer_dict = {k : v for k, v in self.optimizer_params.items()}
-        optimizer_dict["name"] = self.optimizer_name 
+        optimizer_dict = dict(self.optimizer_params)
+        optimizer_dict["name"] = self.optimizer_name
 
-        scheduler_dict = {k : v for k, v in self.scheduler_params.items()}
+        scheduler_dict = dict(self.scheduler_params)
         scheduler_dict["name"] = self.scheduler_name
-        
 
-        loss_dict = {k : v for k, v in self.loss_params.items()}
-        loss_dict["name"] = self.loss_name
+        loss_dict = dict(self.loss_params)
 
         return {
             "root": self.root,
             "modality": self.modality,
+            "run_name": self.run_name,
             "num_classes": self.num_classes,
             "batch_size": self.batch_size,
             "num_workers": self.num_workers,
-            "epochs" : self.epochs,
+            "epochs": self.epochs,
             "seed": self.seed,
-            "include": self.include_bg_in_metric,
-            "device": "auto",
+            "include_bg_in_metric": self.include_bg_in_metric,
+            "device": str(self.device),
             "optimizer": optimizer_dict,
             "scheduler": scheduler_dict,
-            "loss" : loss_dict
+            "loss": loss_dict,
+            "augmentations": {
+                "name": self.augmentation_name
+            }
         }
 
 

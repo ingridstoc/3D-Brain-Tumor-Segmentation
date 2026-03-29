@@ -80,10 +80,13 @@ modality: "t1"
 num_classes: 4
 batch_size: 2
 num_workers: 8
-epochs: 15
+epochs: 12
 seed: 42
 include_bg_in_metric: false
 device: "auto"
+
+augmentations:
+  name: "medium"
 
 optimizer:
   name: adamw

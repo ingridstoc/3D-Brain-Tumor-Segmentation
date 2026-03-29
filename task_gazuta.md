@@ -3,6 +3,9 @@ root@f4a694c9f22b:~/3D-Brain-Tumor-Segmentation# ./start_runpod.sh
 git clone https://github.com/ingridstoc/3D-Brain-Tumor-Segmentation.git
 scp *.pth root@69.30.85.204:/root/3D-Brain-Tumor-Segmentation
 
+augmentari din monai, din lucrari loss fct
+pt random search cate trialuri ar trebui sa fac, 16?
+
 schimb lr, oprimizator, scheduler, loss fct, 
 adaug early stopper
 
