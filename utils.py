@@ -66,8 +66,9 @@ class CFG:
         else:
             raise ValueError("CFG source must be a yaml path or a dict")
 
-        self.raw = data
 
+        self.raw = data
+        self.model_name = data.get("model", {}).get("name", "unet").lower()
         self.root = data["root"]
         self.modality = data.get("modality", "t1").lower()
         self.run_name = data.get("run_name", self.modality)
@@ -109,7 +110,7 @@ class CFG:
         scheduler_dict["name"] = self.scheduler_name
 
         loss_dict = dict(self.loss_params)
-
+        
         return {
             "root": self.root,
             "modality": self.modality,
@@ -126,6 +127,9 @@ class CFG:
             "loss": loss_dict,
             "augmentations": {
                 "name": self.augmentation_name
+            },
+            "model": {
+                "name": self.model_name
             }
         }
 

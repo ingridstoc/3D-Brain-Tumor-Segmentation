@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from monai.networks.nets import UNet, SegResNet
 import os
 from typing import Dict, List, Tuple
 
@@ -147,6 +147,17 @@ class LivePlotter:
 # -------------------------
 # Model
 # -------------------------
+# def build_unet_3d(num_classes: int = 4) -> nn.Module:
+#     return UNet(
+#         spatial_dims=3,
+#         in_channels=1,
+#         out_channels=num_classes,
+#         channels=(32, 64, 128, 256, 320),
+#         strides=(2, 2, 2, 2),
+#         num_res_units=2,
+#         norm="INSTANCE",
+#     )
+
 def build_unet_3d(num_classes: int = 4) -> nn.Module:
     return UNet(
         spatial_dims=3,
@@ -158,6 +169,29 @@ def build_unet_3d(num_classes: int = 4) -> nn.Module:
         norm="INSTANCE",
     )
 
+
+def build_segresnet_3d(num_classes: int = 4) -> nn.Module:
+    return SegResNet(
+        spatial_dims=3,
+        init_filters=32,
+        in_channels=1,
+        out_channels=num_classes,
+        dropout_prob=0.2,
+        blocks_down=(1, 2, 2, 4),
+        blocks_up=(1, 1, 1),
+    )
+
+
+def build_model(cfg: CFG) -> nn.Module:
+    model_name = getattr(cfg, "model_name", "unet").lower()
+
+    if model_name == "unet":
+        return build_unet_3d(num_classes=cfg.num_classes)
+
+    if model_name == "segresnet":
+        return build_segresnet_3d(num_classes=cfg.num_classes)
+
+    raise ValueError(f"Unknown model name: {model_name}")
 
 import torch.nn.functional as F
 
@@ -622,7 +656,7 @@ def main(cfg: CFG):
         cfg=cfg, patient_names=patient_names
     )
 
-    model = build_unet_3d(num_classes=cfg.num_classes).to(cfg.device)
+    model = build_model(cfg).to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
     scaler = None
