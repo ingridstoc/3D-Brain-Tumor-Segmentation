@@ -119,7 +119,8 @@ class CFG:
             "num_workers": self.num_workers,
             "epochs": self.epochs,
             "seed": self.seed,
-            "include_bg_in_metric": self.include_bg_in_metric,
+            "include_bg_in_met"
+            "ric": self.include_bg_in_metric,
             "device": str(self.device),
             "optimizer": optimizer_dict,
             "scheduler": scheduler_dict,
@@ -166,7 +167,6 @@ def build_optimizer(cfg, model):
         "adam": torch.optim.Adam,
         "adamw": torch.optim.AdamW,
         "sgd": torch.optim.SGD,
-        "rmsprop": torch.optim.RMSprop,
         "adagrad": torch.optim.Adagrad,
         "adamax": torch.optim.Adamax,
     }
@@ -181,11 +181,11 @@ def build_optimizer(cfg, model):
 def build_scheduler(cfg, optimizer):
     scheduler_map = {
         "reduce_on_plateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
-        "step": torch.optim.lr_scheduler.StepLR,
-        "multistep": torch.optim.lr_scheduler.MultiStepLR,
-        "exponential": torch.optim.lr_scheduler.ExponentialLR,
-        "cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
-        "cosine_warm_restarts": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts,
+        # "step": torch.optim.lr_scheduler.StepLR,
+        # "multistep": torch.optim.lr_scheduler.MultiStepLR,
+        # "exponential": torch.optim.lr_scheduler.ExponentialLR,
+        # "cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
+        # "cosine_warm_restarts": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts,
         "none": None,
     }
 
