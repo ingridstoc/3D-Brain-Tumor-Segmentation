@@ -107,7 +107,7 @@ optimizer:
     weight_decay: 0.0001
   
   sgd:
-    lr: 0.001
+    lr: 0.0003
     momentum: 0.9
     weight_decay: 0.0001
 
@@ -132,7 +132,7 @@ scheduler:
   none: {}
 
 loss:
-  name: dice_ce
+  name: dice_focal
   dice_ce:
     lambda_dice: 1.0
     lambda_ce: 1.0
