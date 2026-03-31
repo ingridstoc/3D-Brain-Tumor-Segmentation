@@ -21,6 +21,45 @@ from time import perf_counter
 # MODALITIES = ["t1"]
 import matplotlib.pyplot as plt
 
+
+class EarlyStopping:
+    def __init__(self, patience: int = 5, min_delta: float = 1e-2, mode: str = "min"):
+        """
+        mode='min' -> lower is better (e.g. val_loss)
+        mode='max' -> higher is better (e.g. val_dice)
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+
+        self.best_value = None
+        self.num_bad_epochs = 0
+        self.should_stop = False
+
+    def step(self, current_value: float) -> bool:
+        if self.best_value is None:
+            self.best_value = current_value
+            return False
+
+        if self.mode == "min":
+            improved = current_value < (self.best_value - self.min_delta)
+        elif self.mode == "max":
+            improved = current_value > (self.best_value + self.min_delta)
+        else:
+            raise ValueError(f"Unsupported mode: {self.mode}")
+
+        if improved:
+            self.best_value = current_value
+            self.num_bad_epochs = 0
+        else:
+            self.num_bad_epochs += 1
+
+        if self.num_bad_epochs >= self.patience:
+            self.should_stop = True
+
+        return self.should_stop
+
+
 class LivePlotter:
     def __init__(self, num_classes: int, save_dir: str | None = None):
         self.C = num_classes - 1
@@ -609,6 +648,12 @@ def main(cfg: CFG):
     best_val_pc = None
     best_val_loss = None
 
+    early_stopper = EarlyStopping(
+    patience=5,
+    min_delta=1e-3,
+    mode="max",
+)
+
     for epoch in range(1, cfg.epochs + 1):
         tr_loss, tr_dice, tr_pc = train_one_epoch(
             cfg=cfg,
@@ -671,6 +716,9 @@ def main(cfg: CFG):
             f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
             f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}"
         )
+        if early_stopper.step(va_dice):
+            print(f"Early stopping triggered at epoch {epoch}")
+            break
 
     print("\n=== BEST MODEL ===")
     print(f"Best epoch: {best_epoch}")

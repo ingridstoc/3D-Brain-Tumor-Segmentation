@@ -119,8 +119,7 @@ class CFG:
             "num_workers": self.num_workers,
             "epochs": self.epochs,
             "seed": self.seed,
-            "include_bg_in_met"
-            "ric": self.include_bg_in_metric,
+            "include_bg_in_met": self.include_bg_in_metric,
             "device": str(self.device),
             "optimizer": optimizer_dict,
             "scheduler": scheduler_dict,
