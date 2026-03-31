@@ -470,7 +470,7 @@ def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
         train_patients,
         cfg.root,
         modality=cfg.modality,
-        include_random_crops=False,
+        include_random_crops=True,
         transformation=build_train_augmentations(cfg.augmentation_name),
     )
 
