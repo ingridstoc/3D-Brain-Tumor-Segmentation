@@ -1,0 +1,5 @@
+{ epoch 32: train_loss=0.1416, 
+val_loss=0.1458,
+ train_dice=0.8214, 
+ val_dice=0.8171
+}

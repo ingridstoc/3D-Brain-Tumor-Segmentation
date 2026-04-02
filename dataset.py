@@ -519,7 +519,6 @@
 #     return train_loader, val_loader
 
 # sus pt cand foloseam cropuri,
-
 from torch.utils.data import Dataset, DataLoader
 from typing import List, Dict, Tuple
 import os
@@ -556,7 +555,6 @@ def _medium_pipeline_a():
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
-
         RandAffined(
             keys=["image", "label"],
             prob=0.35,
@@ -566,7 +564,6 @@ def _medium_pipeline_a():
             mode=("bilinear", "nearest"),
             padding_mode="border",
         ),
-
         RandScaleIntensityd(keys=["image"], prob=0.20, factors=0.10),
         RandShiftIntensityd(keys=["image"], prob=0.20, offsets=0.10),
     ])
@@ -577,7 +574,6 @@ def _medium_pipeline_b():
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
         RandRotate90d(keys=["image", "label"], prob=0.35, max_k=3),
-
         RandScaleIntensityd(keys=["image"], prob=0.35, factors=0.12),
         RandShiftIntensityd(keys=["image"], prob=0.35, offsets=0.12),
         RandGaussianNoised(keys=["image"], prob=0.20, mean=0.0, std=0.03),
@@ -591,7 +587,6 @@ def _strong_pipeline():
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
         RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=2),
         RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
-
         RandAffined(
             keys=["image", "label"],
             prob=0.45,
@@ -601,7 +596,6 @@ def _strong_pipeline():
             mode=("bilinear", "nearest"),
             padding_mode="border",
         ),
-
         RandScaleIntensityd(keys=["image"], prob=0.35, factors=0.15),
         RandShiftIntensityd(keys=["image"], prob=0.35, offsets=0.15),
         RandGaussianNoised(keys=["image"], prob=0.25, mean=0.0, std=0.04),
@@ -629,9 +623,9 @@ def build_train_augmentations(level: str):
     raise ValueError(f"Unknown augmentation preset: {level}")
 
 
-class BraTSModalDataset(Dataset):
+class BraTSMultiModalDataset(Dataset):
     """
-    Full-volume dataset: one sample per patient.
+    Full-volume multimodal dataset: one sample per patient.
 
     Expected files per patient:
         case_T1_full.npy
@@ -641,7 +635,7 @@ class BraTSModalDataset(Dataset):
         case_seg_full.npy
 
     Returns:
-      image: FloatTensor [1, H, W, D]
+      image: FloatTensor [4, H, W, D]
       label: LongTensor  [H, W, D]
     """
 
@@ -649,27 +643,13 @@ class BraTSModalDataset(Dataset):
         self,
         patient_folders: List[str],
         root: str,
-        modality: str,
         transformation=None,
     ):
         super().__init__()
         self.root = root
-        self.modality = modality.lower()
         self.patient_folders = patient_folders
         self.index: List[Dict[str, str]] = []
         self.transformation = transformation
-
-        modality_to_token = {
-            "t1": "T1",
-            "t1ce": "T1ce",
-            "t2": "T2",
-            "flair": "FLAIR",
-        }
-
-        if self.modality not in modality_to_token:
-            raise ValueError(f"Unknown modality: {self.modality}")
-
-        img_token = f"_{modality_to_token[self.modality]}_full.npy"
 
         for patient_folder in patient_folders:
             if not os.path.isdir(patient_folder):
@@ -677,32 +657,26 @@ class BraTSModalDataset(Dataset):
 
             files = os.listdir(patient_folder)
 
-            img_files = sorted(
-                f for f in files
-                if f.endswith(".npy") and f.endswith(img_token)
-            )
+            t1 = next((f for f in files if f.endswith("_T1_full.npy")), None)
+            t1ce = next((f for f in files if f.endswith("_T1ce_full.npy")), None)
+            t2 = next((f for f in files if f.endswith("_T2_full.npy")), None)
+            flair = next((f for f in files if f.endswith("_FLAIR_full.npy")), None)
+            seg = next((f for f in files if f.endswith("_seg_full.npy")), None)
 
-            if len(img_files) == 0:
+            if not all([t1, t1ce, t2, flair, seg]):
                 continue
 
-            img_f = img_files[0]
-            seg_f = img_f.replace(img_token, "_seg_full.npy")
-
-            img_path = os.path.join(patient_folder, img_f)
-            seg_path = os.path.join(patient_folder, seg_f)
-
-            if os.path.exists(seg_path):
-                self.index.append({
-                    "img": img_path,
-                    "seg": seg_path,
-                    "patient_folder": patient_folder,
-                })
+            self.index.append({
+                "t1": os.path.join(patient_folder, t1),
+                "t1ce": os.path.join(patient_folder, t1ce),
+                "t2": os.path.join(patient_folder, t2),
+                "flair": os.path.join(patient_folder, flair),
+                "seg": os.path.join(patient_folder, seg),
+                "patient_folder": patient_folder,
+            })
 
         if not self.index:
-            raise RuntimeError(
-                f"No full-volume pairs found for modality={self.modality}. "
-                f"Check folder structure and filenames."
-            )
+            raise RuntimeError("No multimodal full-volume pairs found. Check folder structure and filenames.")
 
     def __len__(self) -> int:
         return len(self.index)
@@ -710,9 +684,17 @@ class BraTSModalDataset(Dataset):
     def __getitem__(self, idx: int):
         entry = self.index[idx]
 
+        t1 = np.load(entry["t1"]).astype(np.float32)
+        t1ce = np.load(entry["t1ce"]).astype(np.float32)
+        t2 = np.load(entry["t2"]).astype(np.float32)
+        flair = np.load(entry["flair"]).astype(np.float32)
+        seg = np.load(entry["seg"]).astype(np.int64)
+
+        image = np.stack([t1, t1ce, t2, flair], axis=0)   # [4,H,W,D]
+
         sample = {
-            "image": np.load(entry["img"]).astype(np.float32)[None, ...],
-            "label": np.load(entry["seg"]).astype(np.int64)[None, ...],
+            "image": image,
+            "label": seg[None, ...],   # [1,H,W,D] for MONAI spatial transforms
         }
 
         if self.transformation:
@@ -746,27 +728,25 @@ def make_patient_splits(
     return train_patients, val_patients, test_patients
 
 
-def build_loaders_for_modality(cfg: CFG, patient_names: List[str]):
+def build_loaders(cfg: CFG, patient_names: List[str]):
     train_patients, val_patients, test_patients = make_patient_splits(
         patient_names,
         seed=cfg.seed
     )
 
-    train_ds = BraTSModalDataset(
+    train_ds = BraTSMultiModalDataset(
         train_patients,
         cfg.root,
-        modality=cfg.modality,
         transformation=build_train_augmentations(cfg.augmentation_name),
     )
 
-    val_ds = BraTSModalDataset(
+    val_ds = BraTSMultiModalDataset(
         val_patients,
         cfg.root,
-        modality=cfg.modality,
         transformation=None,
     )
 
-    print(f"Modality: {cfg.modality}")
+    print("Modality: multimodal_4ch")
     print(f"Patients: total={len(patient_names)}")
     print(
         f"Patient split sizes: "

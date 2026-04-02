@@ -10,7 +10,7 @@ import json
 import time
 
 from monai.networks.nets import UNet
-from dataset import build_loaders_for_modality
+from dataset import build_loaders
 from utils import (
     CFG,
     seed_everything,
@@ -19,6 +19,9 @@ from utils import (
 )
 from time import perf_counter
 # MODALITIES = ["t1"]
+import matplotlib
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 
 
@@ -157,41 +160,47 @@ class LivePlotter:
 #         num_res_units=2,
 #         norm="INSTANCE",
 #     )
-
-def build_unet_3d(num_classes: int = 4) -> nn.Module:
+def build_unet_3d(in_channels: int = 4, num_classes: int = 4) -> nn.Module:
     return UNet(
         spatial_dims=3,
-        in_channels=1,
+        in_channels=in_channels,
         out_channels=num_classes,
-        channels=(32, 64, 128, 256, 320),
+        channels=(16, 32, 64, 128, 256),
         strides=(2, 2, 2, 2),
         num_res_units=2,
         norm="INSTANCE",
     )
 
 
-def build_segresnet_3d(num_classes: int = 4) -> nn.Module:
-    return SegResNet(
-        spatial_dims=3,
-        init_filters=32,
-        in_channels=1,
-        out_channels=num_classes,
-        dropout_prob=0.2,
-        blocks_down=(1, 2, 2, 4),
-        blocks_up=(1, 1, 1),
+# def build_segresnet_3d(num_classes: int = 4) -> nn.Module:
+#     return SegResNet(
+#         spatial_dims=3,
+#         init_filters=32,
+#         in_channels=1,
+#         out_channels=num_classes,
+#         dropout_prob=0.2,
+#         blocks_down=(1, 2, 2, 4),
+#         blocks_up=(1, 1, 1),
+#     )
+
+
+# def build_model(cfg: CFG) -> nn.Module:
+#     model_name = getattr(cfg, "model_name", "unet").lower()
+
+#     if model_name == "unet":
+#         return build_unet_3d(num_classes=cfg.num_classes)
+
+#     if model_name == "segresnet":
+#         return build_segresnet_3d(num_classes=cfg.num_classes)
+
+#     raise ValueError(f"Unknown model name: {model_name}")
+
+def build_model(cfg) -> nn.Module:
+    return build_unet_3d(
+        in_channels=4,
+        num_classes=cfg.num_classes,
     )
 
-
-def build_model(cfg: CFG) -> nn.Module:
-    model_name = getattr(cfg, "model_name", "unet").lower()
-
-    if model_name == "unet":
-        return build_unet_3d(num_classes=cfg.num_classes)
-
-    if model_name == "segresnet":
-        return build_segresnet_3d(num_classes=cfg.num_classes)
-
-    raise ValueError(f"Unknown model name: {model_name}")
 
 import torch.nn.functional as F
 
@@ -644,7 +653,7 @@ from typing import Dict, List
 
 
 def main(cfg: CFG):
-    print(f"Training modality: {cfg.modality}")
+    print("Training modality: multimodal_4ch")
     seed_everything(cfg.seed)
 
     patient_names = sorted([
@@ -652,7 +661,7 @@ def main(cfg: CFG):
         if os.path.isdir(os.path.join(cfg.root, d))
     ])
 
-    train_loader, val_loader = build_loaders_for_modality(
+    train_loader, val_loader = build_loaders(
         cfg=cfg, patient_names=patient_names
     )
 
@@ -750,6 +759,7 @@ def main(cfg: CFG):
             f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
             f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}"
         )
+  
         if early_stopper.step(va_dice):
             print(f"Early stopping triggered at epoch {epoch}")
             break
@@ -761,11 +771,11 @@ def main(cfg: CFG):
 
     os.makedirs("results", exist_ok=True)
     summary_path = os.path.join("results", f"{run_name}_best_metrics.json")
-
+    
     with open(summary_path, "w") as f:
         json.dump({
             "run_name": run_name,
-            "modality": cfg.modality,
+            "modality": "multimodal_4ch",
             "best_epoch": best_epoch,
             "best_val_dice": best_val_dice,
             "best_val_loss": best_val_loss,

@@ -6,7 +6,27 @@ import os
 
 import nibabel as nib
 import numpy as np
+def pad_to_multiple(
+    arr: np.ndarray,
+    multiple: int = 16,
+    pad_value: float | int = 0,
+) -> np.ndarray:
+    pad_width = []
 
+    for dim in arr.shape:
+        target = ((dim + multiple - 1) // multiple) * multiple
+        total_pad = target - dim
+        pad_width.append((0, total_pad))
+
+    if any(p != (0, 0) for p in pad_width):
+        arr = np.pad(
+            arr,
+            pad_width,
+            mode="constant",
+            constant_values=pad_value,
+        )
+
+    return arr
 
 # -----------------------------
 # Normalization
@@ -92,6 +112,11 @@ def process_case_full_from_disk(
     t1ce = normalize_brats_volume(t1ce)
     t2 = normalize_brats_volume(t2)
     flair = normalize_brats_volume(flair)
+    t1 = pad_to_multiple(t1, multiple=16, pad_value=0.0)
+    t1ce = pad_to_multiple(t1ce, multiple=16, pad_value=0.0)
+    t2 = pad_to_multiple(t2, multiple=16, pad_value=0.0)
+    flair = pad_to_multiple(flair, multiple=16, pad_value=0.0)
+    seg = pad_to_multiple(seg, multiple=16, pad_value=0)
 
     out_patient_dir = out_dir / f"patient_{case_id}"
     out_patient_dir.mkdir(parents=True, exist_ok=True)

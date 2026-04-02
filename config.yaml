@@ -75,15 +75,16 @@
 #   none: {}
 
 
-root: "brats_crops"
-modality: "t1"
+root: "brats_full"
+modality: "multimodal_4ch"
 num_classes: 4
 batch_size: 1 # era 2 cand foloseam cropuri
 num_workers: 8
-epochs: 50
+epochs: 35
 seed: 42
 include_bg_in_metric: false
 device: "auto"
+run_name: "multimodal_4ch_full"
 
 model:
   name: "segresnet"
