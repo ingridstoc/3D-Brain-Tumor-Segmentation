@@ -2,7 +2,8 @@ from __future__ import annotations
 from monai.networks.nets import UNet, SegResNet
 import os
 from typing import Dict, List, Tuple
-
+from monai.metrics import HausdorffDistanceMetric, MeanIoU, ConfusionMatrixMetric
+from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -160,17 +161,92 @@ class LivePlotter:
 #         num_res_units=2,
 #         norm="INSTANCE",
 #     )
-def build_unet_3d(in_channels: int = 4, num_classes: int = 4) -> nn.Module:
+# def build_unet_3d(in_channels: int = 4, num_classes: int = 4) -> nn.Module:
+#     return UNet(
+#         spatial_dims=3,
+#         in_channels=in_channels,
+#         out_channels=num_classes,
+#         channels=(16, 32, 64, 128, 256),
+#         strides=(2, 2, 2, 2),
+#         num_res_units=2,
+#         norm="INSTANCE",
+#     )
+def build_unet_3d(cfg: CFG) -> nn.Module:
+    p = cfg.model_params
     return UNet(
         spatial_dims=3,
-        in_channels=in_channels,
-        out_channels=num_classes,
-        channels=(16, 32, 64, 128, 256),
-        strides=(2, 2, 2, 2),
-        num_res_units=2,
-        norm="INSTANCE",
+        in_channels=p.get("in_channels", 4),
+        out_channels=cfg.num_classes,
+        channels=tuple(p.get("channels", [16, 32, 64, 128, 256])),
+        strides=tuple(p.get("strides", [2, 2, 2, 2])),
+        num_res_units=p.get("num_res_units", 2),
+        norm=p.get("norm", "INSTANCE"),
     )
 
+
+def build_segresnet_3d(cfg: CFG) -> nn.Module:
+    p = cfg.model_params
+    return SegResNet(
+        spatial_dims=3,
+        init_filters=p.get("init_filters", 16),
+        in_channels=p.get("in_channels", 4),
+        out_channels=cfg.num_classes,
+        dropout_prob=p.get("dropout_prob", 0.2),
+        blocks_down=tuple(p.get("blocks_down", [1, 2, 2, 4])),
+        blocks_up=tuple(p.get("blocks_up", [1, 1, 1])),
+    )
+
+
+def build_unetr_3d(cfg: CFG) -> nn.Module:
+    p = cfg.model_params
+    return UNETR(
+        in_channels=p.get("in_channels", 4),
+        out_channels=cfg.num_classes,
+        img_size=tuple(p.get("img_size", [240, 240, 160])),
+        feature_size=p.get("feature_size", 16),
+        hidden_size=p.get("hidden_size", 768),
+        mlp_dim=p.get("mlp_dim", 3072),
+        num_heads=p.get("num_heads", 12),
+        proj_type=p.get("proj_type", "conv"),
+        norm_name=p.get("norm_name", "instance"),
+        res_block=p.get("res_block", True),
+        dropout_rate=p.get("dropout_rate", 0.0),
+    )
+
+
+def build_dynunet_3d(cfg: CFG) -> nn.Module:
+    p = cfg.model_params
+    return DynUNet(
+        spatial_dims=3,
+        in_channels=p.get("in_channels", 4),
+        out_channels=cfg.num_classes,
+        kernel_size=[tuple(x) for x in p.get("kernel_size", [[3,3,3],[3,3,3],[3,3,3],[3,3,3],[3,3,3]])],
+        strides=[tuple(x) for x in p.get("strides", [[1,1,1],[2,2,2],[2,2,2],[2,2,2],[2,2,2]])],
+        upsample_kernel_size=[tuple(x) for x in p.get("upsample_kernel_size", [[2,2,2],[2,2,2],[2,2,2],[2,2,2]])],
+        filters=p.get("filters", [32, 64, 128, 256, 320]),
+        dropout=p.get("dropout", 0.0),
+        deep_supervision=p.get("deep_supervision", False),
+        deep_supr_num=p.get("deep_supr_num", 1),
+        res_block=p.get("res_block", True),
+    )
+
+
+def build_model(cfg: CFG) -> nn.Module:
+    model_name = cfg.model_name.lower()
+
+    if model_name == "unet":
+        return build_unet_3d(cfg)
+
+    if model_name == "segresnet":
+        return build_segresnet_3d(cfg)
+
+    if model_name == "unetr":
+        return build_unetr_3d(cfg)
+
+    if model_name == "dynunet":
+        return build_dynunet_3d(cfg)
+
+    raise ValueError(f"Unknown model name: {cfg.model_name}")
 
 # def build_segresnet_3d(num_classes: int = 4) -> nn.Module:
 #     return SegResNet(
@@ -195,11 +271,11 @@ def build_unet_3d(in_channels: int = 4, num_classes: int = 4) -> nn.Module:
 
 #     raise ValueError(f"Unknown model name: {model_name}")
 
-def build_model(cfg) -> nn.Module:
-    return build_unet_3d(
-        in_channels=4,
-        num_classes=cfg.num_classes,
-    )
+# def build_model(cfg) -> nn.Module:
+#     return build_unet_3d(
+#         in_channels=4,
+#         num_classes=cfg.num_classes,
+#     )
 
 
 import torch.nn.functional as F
@@ -268,8 +344,103 @@ def dice_from_logits(
     mean_dice = torch.nanmean(dice_for_mean, dim=1)
 
     return dice, mean_dice
+def logits_to_onehot(
+    logits: torch.Tensor,
+    seg: torch.Tensor,
+    num_classes: int,
+):
+    pred = torch.argmax(logits, dim=1)  # [B,H,W,D]
+
+    if seg.ndim == 5 and seg.shape[1] == 1:
+        gt = seg[:, 0]
+    else:
+        gt = seg
+
+    pred_1h = F.one_hot(pred.long(), num_classes=num_classes)
+    gt_1h = F.one_hot(gt.long(), num_classes=num_classes)
+
+    pred_1h = pred_1h.permute(0, 4, 1, 2, 3).float()
+    gt_1h = gt_1h.permute(0, 4, 1, 2, 3).float()
+
+    return pred_1h, gt_1h
 
 
+def sanitize_metric_tensor(x: torch.Tensor) -> torch.Tensor:
+    x = x.clone()
+    x[torch.isinf(x)] = torch.nan
+    return x
+
+
+@torch.no_grad()
+def compute_extra_metrics(
+    logits: torch.Tensor,
+    seg: torch.Tensor,
+    num_classes: int,
+    include_bg: bool,
+    hd95_percentile: float = 95,
+):
+    pred_1h, gt_1h = logits_to_onehot(logits, seg, num_classes)
+
+    iou_metric = MeanIoU(
+        include_background=include_bg,
+        reduction="none",
+        ignore_empty=True,
+    )
+
+    hd95_metric = HausdorffDistanceMetric(
+        include_background=include_bg,
+        percentile=hd95_percentile,
+        reduction="none",
+    )
+
+    sens_metric = ConfusionMatrixMetric(
+        include_background=include_bg,
+        metric_name="sensitivity",
+        reduction="none",
+    )
+
+    spec_metric = ConfusionMatrixMetric(
+        include_background=include_bg,
+        metric_name="specificity",
+        reduction="none",
+    )
+
+    iou = sanitize_metric_tensor(iou_metric(pred_1h, gt_1h))
+    hd95 = sanitize_metric_tensor(hd95_metric(pred_1h, gt_1h))
+    sens = sanitize_metric_tensor(sens_metric(pred_1h, gt_1h))
+    spec = sanitize_metric_tensor(spec_metric(pred_1h, gt_1h))
+
+    return {
+        "iou": iou,
+        "hd95": hd95,
+        "sensitivity": sens,
+        "specificity": spec,
+    }
+
+
+def init_metric_accumulators(num_eval_classes: int):
+    return {
+        "iou_sum": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "iou_count": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "hd95_sum": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "hd95_count": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "sensitivity_sum": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "sensitivity_count": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "specificity_sum": torch.zeros(num_eval_classes, dtype=torch.float64),
+        "specificity_count": torch.zeros(num_eval_classes, dtype=torch.float64),
+    }
+
+
+def update_metric_accumulators(acc, metric_name: str, values: torch.Tensor):
+    values = values.detach().cpu().double()
+    valid = ~torch.isnan(values)
+
+    acc[f"{metric_name}_sum"] += torch.where(valid, values, torch.zeros_like(values)).sum(dim=0)
+    acc[f"{metric_name}_count"] += valid.sum(dim=0).double()
+
+
+def finalize_metric(acc, metric_name: str):
+    return acc[f"{metric_name}_sum"] / torch.clamp(acc[f"{metric_name}_count"], min=1.0)
 # def train_one_epoch(
 #     cfg: CFG,
 #     model: nn.Module,
@@ -405,6 +576,10 @@ def train_one_epoch(
         # DEBUG MODE: autocast disabled
         with torch.autocast(device_type="cuda", enabled=False):
             logits = model(img)
+            if isinstance(logits, (list, tuple)):
+                logits = logits[0]
+            elif logits.ndim == 6:
+                logits = logits[:, 0]
             loss = cfg.loss_fn(logits, seg_for_loss)
 
         # checks after forward
@@ -456,64 +631,64 @@ def train_one_epoch(
 
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
-@torch.no_grad()
-def validate_one_epoch(
-    cfg: CFG,
-    model: nn.Module,
-    val_loader: DataLoader,
-):
-    model.eval()
+# @torch.no_grad()
+# def validate_one_epoch(
+#     cfg: CFG,
+#     model: nn.Module,
+#     val_loader: DataLoader,
+# ):
+#     model.eval()
 
-    running_loss = 0.0
-    dice_sum = 0.0
-    dice_count = 0
+#     running_loss = 0.0
+#     dice_sum = 0.0
+#     dice_count = 0
 
    
-    num_plot_classes = cfg.num_classes - 1  # classes 1..3
-    per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
-    per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
+#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
+#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
  
 
-    start = perf_counter()
+#     start = perf_counter()
 
-    for idx, (img, seg) in enumerate(val_loader):
-        if idx == len(val_loader) - 1:
-            end = perf_counter()
-            elapsed_ms = (end - start)
-            #print(f"Time taken: {elapsed_ms:.3f}s")
+#     for idx, (img, seg) in enumerate(val_loader):
+#         if idx == len(val_loader) - 1:
+#             end = perf_counter()
+#             elapsed_ms = (end - start)
+#             #print(f"Time taken: {elapsed_ms:.3f}s")
 
-        img = img.to(cfg.device, non_blocking=True)
-        seg = seg.to(cfg.device, non_blocking=True)
+#         img = img.to(cfg.device, non_blocking=True)
+#         seg = seg.to(cfg.device, non_blocking=True)
 
-        seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
+#         seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
 
-        logits = model(img)
-        loss = cfg.loss_fn(logits, seg_for_loss)
-        running_loss += float(loss.item())
+#         logits = model(img)
+#         loss = cfg.loss_fn(logits, seg_for_loss)
+#         running_loss += float(loss.item())
 
-        dice_per_class, mean_dice = dice_from_logits(
-            logits,
-            seg,
-            cfg.num_classes,
-            cfg.include_bg_in_metric
-        )
+#         dice_per_class, mean_dice = dice_from_logits(
+#             logits,
+#             seg,
+#             cfg.num_classes,
+#             cfg.include_bg_in_metric
+#         )
 
-        dice_sum += torch.nansum(mean_dice).item()
-        dice_count += (~torch.isnan(mean_dice)).sum().item()
+#         dice_sum += torch.nansum(mean_dice).item()
+#         dice_count += (~torch.isnan(mean_dice)).sum().item()
 
-        d_compact = dice_per_class[:, 1:].detach().cpu().double()
-        valid = ~torch.isnan(d_compact)
+#         d_compact = dice_per_class[:, 1:].detach().cpu().double()
+#         valid = ~torch.isnan(d_compact)
 
-        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
-        per_class_count += valid.sum(dim=0).double()
+#         per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
+#         per_class_count += valid.sum(dim=0).double()
         
 
 
-    elapsed_s = perf_counter() - start
+#     elapsed_s = perf_counter() - start
 
-    val_loss = running_loss / max(1, len(val_loader))
-    val_mean_tumor_dice = dice_sum / max(1, dice_count)
-    val_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
+#     val_loss = running_loss / max(1, len(val_loader))
+#     val_mean_tumor_dice = dice_sum / max(1, dice_count)
+#     val_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
 
     # print(
     #     f"val_loss={val_loss:.4f} "
@@ -522,7 +697,7 @@ def validate_one_epoch(
     #     f"time={elapsed_s:.3f}s"
     # )
 
-    return val_loss, val_mean_tumor_dice, val_dice_per_class_mean
+    # return val_loss, val_mean_tumor_dice, val_dice_per_class_mean
 
 # -------------------------
 # Main pipeline
@@ -646,6 +821,97 @@ def validate_one_epoch(
 
 #     print(f"Saved summary to {summary_path}")
 
+@torch.no_grad()
+def evaluate_one_epoch(
+    cfg: CFG,
+    model: nn.Module,
+    loader: DataLoader,
+    split_name: str = "val",
+):
+    model.eval()
+
+    running_loss = 0.0
+    dice_sum = 0.0
+    dice_count = 0
+
+    num_eval_classes = cfg.num_classes if cfg.include_bg_in_metric else (cfg.num_classes - 1)
+
+    per_class_sum = torch.zeros(num_eval_classes, dtype=torch.float64)
+    per_class_count = torch.zeros(num_eval_classes, dtype=torch.float64)
+
+    extra_acc = init_metric_accumulators(num_eval_classes)
+
+    start = perf_counter()
+
+    for img, seg in loader:
+        img = img.to(cfg.device, non_blocking=True)
+        seg = seg.to(cfg.device, non_blocking=True)
+
+        seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
+
+        logits = model(img)
+        if isinstance(logits, (list, tuple)):
+            logits = logits[0]
+        elif logits.ndim == 6:
+            logits = logits[:, 0]
+        loss = cfg.loss_fn(logits, seg_for_loss)
+        running_loss += float(loss.item())
+
+        dice_per_class, mean_dice = dice_from_logits(
+            logits,
+            seg,
+            cfg.num_classes,
+            cfg.include_bg_in_metric
+        )
+
+        dice_sum += torch.nansum(mean_dice).item()
+        dice_count += (~torch.isnan(mean_dice)).sum().item()
+
+        d_compact = dice_per_class if cfg.include_bg_in_metric else dice_per_class[:, 1:]
+        d_compact = d_compact.detach().cpu().double()
+        valid = ~torch.isnan(d_compact)
+
+        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
+        per_class_count += valid.sum(dim=0).double()
+
+        extra = compute_extra_metrics(
+            logits=logits,
+            seg=seg,
+            num_classes=cfg.num_classes,
+            include_bg=cfg.include_bg_in_metric,
+            hd95_percentile=cfg.hd95_percentile,
+        )
+
+        if cfg.compute_iou:
+            update_metric_accumulators(extra_acc, "iou", extra["iou"])
+
+        if cfg.compute_hd95:
+            update_metric_accumulators(extra_acc, "hd95", extra["hd95"])
+
+        if cfg.compute_sensitivity:
+            update_metric_accumulators(extra_acc, "sensitivity", extra["sensitivity"])
+
+        if cfg.compute_specificity:
+            update_metric_accumulators(extra_acc, "specificity", extra["specificity"])
+
+    elapsed_s = perf_counter() - start
+
+    mean_loss = running_loss / max(1, len(loader))
+    mean_tumor_dice = dice_sum / max(1, dice_count)
+    dice_pc_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
+
+    result = {
+        f"{split_name}_loss": mean_loss,
+        f"{split_name}_mean_tumor_dice": mean_tumor_dice,
+        f"{split_name}_dice_per_class_mean": dice_pc_mean,
+        f"{split_name}_iou_per_class_mean": finalize_metric(extra_acc, "iou") if cfg.compute_iou else None,
+        f"{split_name}_hd95_per_class_mean": finalize_metric(extra_acc, "hd95") if cfg.compute_hd95 else None,
+        f"{split_name}_sensitivity_per_class_mean": finalize_metric(extra_acc, "sensitivity") if cfg.compute_sensitivity else None,
+        f"{split_name}_specificity_per_class_mean": finalize_metric(extra_acc, "specificity") if cfg.compute_specificity else None,
+        f"{split_name}_elapsed_s": elapsed_s,
+    }
+
+    return result
 
 import json
 import os
@@ -661,7 +927,7 @@ def main(cfg: CFG):
         if os.path.isdir(os.path.join(cfg.root, d))
     ])
 
-    train_loader, val_loader = build_loaders(
+    train_loader, val_loader, test_loader = build_loaders(
         cfg=cfg, patient_names=patient_names
     )
 
@@ -690,6 +956,10 @@ def main(cfg: CFG):
     best_epoch = -1
     best_val_pc = None
     best_val_loss = None
+    best_val_iou = None
+    best_val_hd95 = None
+    best_val_sensitivity = None
+    best_val_specificity = None
 
     early_stopper = EarlyStopping(
     patience=5,
@@ -706,17 +976,38 @@ def main(cfg: CFG):
             scaler=scaler,
         )
 
-        va_loss, va_dice, va_pc = validate_one_epoch(
+        val_metrics = evaluate_one_epoch(
             cfg=cfg,
             model=model,
-            val_loader=val_loader,
+            loader=val_loader,
+            split_name="val",
         )
+
+        va_loss = val_metrics["val_loss"]
+        va_dice = val_metrics["val_mean_tumor_dice"]
+        va_pc = val_metrics["val_dice_per_class_mean"]
 
         if va_dice > best_val_dice:
             best_val_dice = va_dice
             best_epoch = epoch
             best_val_pc = va_pc.detach().cpu().tolist()
             best_val_loss = va_loss
+            best_val_iou = (
+                val_metrics["val_iou_per_class_mean"].detach().cpu().tolist()
+                if val_metrics["val_iou_per_class_mean"] is not None else None
+            )
+            best_val_hd95 = (
+                val_metrics["val_hd95_per_class_mean"].detach().cpu().tolist()
+                if val_metrics["val_hd95_per_class_mean"] is not None else None
+            )
+            best_val_sensitivity = (
+                val_metrics["val_sensitivity_per_class_mean"].detach().cpu().tolist()
+                if val_metrics["val_sensitivity_per_class_mean"] is not None else None
+            )
+            best_val_specificity = (
+                val_metrics["val_specificity_per_class_mean"].detach().cpu().tolist()
+                if val_metrics["val_specificity_per_class_mean"] is not None else None
+            )
 
             os.makedirs("checkpoints", exist_ok=True)
             ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
@@ -728,6 +1019,12 @@ def main(cfg: CFG):
                 "val_dice": best_val_dice,
                 "val_pc": best_val_pc,
                 "val_loss": best_val_loss,
+                "val_iou": best_val_iou,
+                "val_hd95": best_val_hd95,
+                "val_sensitivity": best_val_sensitivity,
+                "val_specificity": best_val_specificity,
+                "model_name": cfg.model_name,
+                "model_params": cfg.model_params,
             }, ckpt_path)
 
             print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
@@ -763,11 +1060,35 @@ def main(cfg: CFG):
         if early_stopper.step(va_dice):
             print(f"Early stopping triggered at epoch {epoch}")
             break
+    ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
+
+    ckpt = torch.load(ckpt_path, map_location=cfg.device)
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    test_metrics = evaluate_one_epoch(
+        cfg=cfg,
+        model=model,
+        loader=test_loader,
+        split_name="test",
+    )
 
     print("\n=== BEST MODEL ===")
+    print(f"Model: {cfg.model_name}")
     print(f"Best epoch: {best_epoch}")
     print(f"Best val Dice: {best_val_dice:.4f}")
     print(f"Best per-class Dice: {best_val_pc}")
+    print(f"Best per-class IoU: {best_val_iou}")
+    print(f"Best per-class HD95: {best_val_hd95}")
+    print(f"Best per-class Sensitivity: {best_val_sensitivity}")
+    print(f"Best per-class Specificity: {best_val_specificity}")
+
+    print("\n=== TEST METRICS (best checkpoint) ===")
+    print(f"Test Dice: {test_metrics['test_mean_tumor_dice']:.4f}")
+    print(f"Test per-class Dice: {test_metrics['test_dice_per_class_mean'].detach().cpu().tolist()}")
+    print(f"Test per-class IoU: {test_metrics['test_iou_per_class_mean'].detach().cpu().tolist() if test_metrics['test_iou_per_class_mean'] is not None else None}")
+    print(f"Test per-class HD95: {test_metrics['test_hd95_per_class_mean'].detach().cpu().tolist() if test_metrics['test_hd95_per_class_mean'] is not None else None}")
+    print(f"Test per-class Sensitivity: {test_metrics['test_sensitivity_per_class_mean'].detach().cpu().tolist() if test_metrics['test_sensitivity_per_class_mean'] is not None else None}")
+    print(f"Test per-class Specificity: {test_metrics['test_specificity_per_class_mean'].detach().cpu().tolist() if test_metrics['test_specificity_per_class_mean'] is not None else None}")
 
     os.makedirs("results", exist_ok=True)
     summary_path = os.path.join("results", f"{run_name}_best_metrics.json")
@@ -776,10 +1097,23 @@ def main(cfg: CFG):
         json.dump({
             "run_name": run_name,
             "modality": "multimodal_4ch",
+            "model_name": cfg.model_name,
+            "model_params": cfg.model_params,
             "best_epoch": best_epoch,
             "best_val_dice": best_val_dice,
             "best_val_loss": best_val_loss,
             "best_val_pc": best_val_pc,
+            "best_val_iou": best_val_iou,
+            "best_val_hd95": best_val_hd95,
+            "best_val_sensitivity": best_val_sensitivity,
+            "best_val_specificity": best_val_specificity,
+            "test_loss": test_metrics["test_loss"],
+            "test_dice": test_metrics["test_mean_tumor_dice"],
+            "test_dice_per_class": test_metrics["test_dice_per_class_mean"].detach().cpu().tolist(),
+            "test_iou_per_class": test_metrics["test_iou_per_class_mean"].detach().cpu().tolist() if test_metrics["test_iou_per_class_mean"] is not None else None,
+            "test_hd95_per_class": test_metrics["test_hd95_per_class_mean"].detach().cpu().tolist() if test_metrics["test_hd95_per_class_mean"] is not None else None,
+            "test_sensitivity_per_class": test_metrics["test_sensitivity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_sensitivity_per_class_mean"] is not None else None,
+            "test_specificity_per_class": test_metrics["test_specificity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_specificity_per_class_mean"] is not None else None,
             "history": history,
         }, f, indent=2)
 
@@ -787,13 +1121,21 @@ def main(cfg: CFG):
 
     return {
         "run_name": run_name,
-        "modality": cfg.modality,
+        "model_name": cfg.model_name,
         "best_epoch": best_epoch,
         "best_val_dice": best_val_dice,
         "best_val_loss": best_val_loss,
         "best_val_pc": best_val_pc,
-        "final_val_dice": history["val_dice"][-1] if history["val_dice"] else None,
-        "final_val_loss": history["val_loss"][-1] if history["val_loss"] else None,
+        "best_val_iou": best_val_iou,
+        "best_val_hd95": best_val_hd95,
+        "best_val_sensitivity": best_val_sensitivity,
+        "best_val_specificity": best_val_specificity,
+        "test_dice": test_metrics["test_mean_tumor_dice"],
+        "test_dice_per_class": test_metrics["test_dice_per_class_mean"].detach().cpu().tolist(),
+        "test_iou_per_class": test_metrics["test_iou_per_class_mean"].detach().cpu().tolist() if test_metrics["test_iou_per_class_mean"] is not None else None,
+        "test_hd95_per_class": test_metrics["test_hd95_per_class_mean"].detach().cpu().tolist() if test_metrics["test_hd95_per_class_mean"] is not None else None,
+        "test_sensitivity_per_class": test_metrics["test_sensitivity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_sensitivity_per_class_mean"] is not None else None,
+        "test_specificity_per_class": test_metrics["test_specificity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_specificity_per_class_mean"] is not None else None,
     }
 
 

@@ -727,7 +727,6 @@ def make_patient_splits(
 
     return train_patients, val_patients, test_patients
 
-
 def build_loaders(cfg: CFG, patient_names: List[str]):
     train_patients, val_patients, test_patients = make_patient_splits(
         patient_names,
@@ -746,6 +745,12 @@ def build_loaders(cfg: CFG, patient_names: List[str]):
         transformation=None,
     )
 
+    test_ds = BraTSMultiModalDataset(
+        test_patients,
+        cfg.root,
+        transformation=None,
+    )
+
     print("Modality: multimodal_4ch")
     print(f"Patients: total={len(patient_names)}")
     print(
@@ -754,7 +759,7 @@ def build_loaders(cfg: CFG, patient_names: List[str]):
     )
     print(
         f"Sample counts: "
-        f"train={len(train_ds)} val={len(val_ds)}"
+        f"train={len(train_ds)} val={len(val_ds)} test={len(test_ds)}"
     )
 
     train_loader = DataLoader(
@@ -777,7 +782,73 @@ def build_loaders(cfg: CFG, patient_names: List[str]):
         persistent_workers=(cfg.num_workers > 0),
     )
 
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=1,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=(cfg.device.type == "cuda"),
+        drop_last=False,
+        persistent_workers=(cfg.num_workers > 0),
+    )
+
     print(f"train batches = {len(train_loader)}")
     print(f"val batches   = {len(val_loader)}")
+    print(f"test batches  = {len(test_loader)}")
 
-    return train_loader, val_loader
+    return train_loader, val_loader, test_loader
+
+
+# def build_loaders(cfg: CFG, patient_names: List[str]):
+#     train_patients, val_patients, test_patients = make_patient_splits(
+#         patient_names,
+#         seed=cfg.seed
+#     )
+
+#     train_ds = BraTSMultiModalDataset(
+#         train_patients,
+#         cfg.root,
+#         transformation=build_train_augmentations(cfg.augmentation_name),
+#     )
+
+#     val_ds = BraTSMultiModalDataset(
+#         val_patients,
+#         cfg.root,
+#         transformation=None,
+#     )
+
+#     print("Modality: multimodal_4ch")
+#     print(f"Patients: total={len(patient_names)}")
+#     print(
+#         f"Patient split sizes: "
+#         f"train={len(train_patients)} val={len(val_patients)} test={len(test_patients)}"
+#     )
+#     print(
+#         f"Sample counts: "
+#         f"train={len(train_ds)} val={len(val_ds)}"
+#     )
+
+#     train_loader = DataLoader(
+#         train_ds,
+#         batch_size=cfg.batch_size,
+#         shuffle=True,
+#         num_workers=cfg.num_workers,
+#         pin_memory=(cfg.device.type == "cuda"),
+#         drop_last=False,
+#         persistent_workers=(cfg.num_workers > 0),
+#     )
+
+#     val_loader = DataLoader(
+#         val_ds,
+#         batch_size=1,
+#         shuffle=False,
+#         num_workers=cfg.num_workers,
+#         pin_memory=(cfg.device.type == "cuda"),
+#         drop_last=False,
+#         persistent_workers=(cfg.num_workers > 0),
+#     )
+
+#     print(f"train batches = {len(train_loader)}")
+#     print(f"val batches   = {len(val_loader)}")
+
+#     return train_loader, val_loader

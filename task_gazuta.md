@@ -6,6 +6,14 @@ scp *.pth root@69.30.85.204:/root/3D-Brain-Tumor-Segmentation
 augmentari din monai, din lucrari loss fct
 pt random search cate trialuri ar trebui sa fac, 16?
 
+
+single-model baseline with 3D U-Net
+stronger CNN baseline with SegResNet
+transformer-based model with UNETR
+nnU-Net-style model with DynUNet
+ensemble of all of them
+
+
 schimb lr, oprimizator, scheduler, loss fct, 
 adaug early stopper
 

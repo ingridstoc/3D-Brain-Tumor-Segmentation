@@ -78,6 +78,13 @@ class CFG:
         self.epochs = data.get("epochs", 1)
         self.seed = data.get("seed", 42)
         self.include_bg_in_metric = data.get("include_bg_in_metric", False)
+        metrics_cfg = data.get("metrics", {})
+        self.compute_hd95 = metrics_cfg.get("compute_hd95", True)
+        self.hd95_percentile = metrics_cfg.get("hd95_percentile", 95)
+        self.compute_iou = metrics_cfg.get("compute_iou", True)
+        self.compute_sensitivity = metrics_cfg.get("compute_sensitivity", True)
+        self.compute_specificity = metrics_cfg.get("compute_specificity", True)
+        self.eval_on_train = metrics_cfg.get("eval_on_train", False)
 
         device_value = data.get("device", "auto")
         if device_value == "auto":
@@ -129,7 +136,16 @@ class CFG:
                 "name": self.augmentation_name
             },
             "model": {
-                "name": self.model_name
+                "name": self.model_name,
+                "params": dict(self.model_params),
+            },
+            "metrics": {
+                "compute_hd95": self.compute_hd95,
+                "hd95_percentile": self.hd95_percentile,
+                "compute_iou": self.compute_iou,
+                "compute_sensitivity": self.compute_sensitivity,
+                "compute_specificity": self.compute_specificity,
+                "eval_on_train": self.eval_on_train,
             }
         }
 
