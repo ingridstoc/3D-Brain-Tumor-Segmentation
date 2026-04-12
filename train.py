@@ -2,7 +2,7 @@ from __future__ import annotations
 from monai.networks.nets import UNet, SegResNet
 import os
 from typing import Dict, List, Tuple
-from monai.metrics import HausdorffDistanceMetric, MeanIoU, ConfusionMatrixMetric
+from monai.metrics import HausdorffDistanceMetric, MeanIoU
 from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet
 import torch
 import torch.nn as nn
@@ -363,7 +363,45 @@ def logits_to_onehot(
     gt_1h = gt_1h.permute(0, 4, 1, 2, 3).float()
 
     return pred_1h, gt_1h
+def compute_sensitivity_specificity_from_onehot(
+    pred_1h: torch.Tensor,
+    gt_1h: torch.Tensor,
+    include_bg: bool,
+    eps: float = 1e-6,
+):
+    """
+    pred_1h, gt_1h: [B, C, H, W, D]
 
+    returns:
+      sensitivity: [B, C_eval]
+      specificity: [B, C_eval]
+    """
+    pred = pred_1h.bool()
+    gt = gt_1h.bool()
+
+    dims = (2, 3, 4)
+
+    tp = (pred & gt).sum(dim=dims).float()
+    fp = (pred & (~gt)).sum(dim=dims).float()
+    tn = ((~pred) & (~gt)).sum(dim=dims).float()
+    fn = ((~pred) & gt).sum(dim=dims).float()
+
+    sensitivity = (tp + eps) / (tp + fn + eps)
+    specificity = (tn + eps) / (tn + fp + eps)
+
+    # classes absent in gt can make sensitivity not meaningful
+    gt_pos = gt.sum(dim=dims)
+    sensitivity[gt_pos == 0] = torch.nan
+
+    # classes absent in gt negatives can make specificity not meaningful
+    gt_neg = (~gt).sum(dim=dims)
+    specificity[gt_neg == 0] = torch.nan
+
+    if not include_bg:
+        sensitivity = sensitivity[:, 1:]
+        specificity = specificity[:, 1:]
+
+    return sensitivity, specificity
 
 def sanitize_metric_tensor(x: torch.Tensor) -> torch.Tensor:
     x = x.clone()
@@ -382,41 +420,39 @@ def compute_extra_metrics(
     pred_1h, gt_1h = logits_to_onehot(logits, seg, num_classes)
 
     iou_metric = MeanIoU(
-        include_background=include_bg,
+        include_background=True,
         reduction="none",
         ignore_empty=True,
     )
 
     hd95_metric = HausdorffDistanceMetric(
-        include_background=include_bg,
+        include_background=True,
         percentile=hd95_percentile,
-        reduction="none",
-    )
-
-    sens_metric = ConfusionMatrixMetric(
-        include_background=include_bg,
-        metric_name="sensitivity",
-        reduction="none",
-    )
-
-    spec_metric = ConfusionMatrixMetric(
-        include_background=include_bg,
-        metric_name="specificity",
         reduction="none",
     )
 
     iou = sanitize_metric_tensor(iou_metric(pred_1h, gt_1h))
     hd95 = sanitize_metric_tensor(hd95_metric(pred_1h, gt_1h))
-    sens = sanitize_metric_tensor(sens_metric(pred_1h, gt_1h))
-    spec = sanitize_metric_tensor(spec_metric(pred_1h, gt_1h))
+
+    sensitivity, specificity = compute_sensitivity_specificity_from_onehot(
+        pred_1h=pred_1h,
+        gt_1h=gt_1h,
+        include_bg=include_bg,
+    )
+
+    sensitivity = sanitize_metric_tensor(sensitivity)
+    specificity = sanitize_metric_tensor(specificity)
+
+    if not include_bg:
+        iou = iou[:, 1:]
+        hd95 = hd95[:, 1:]
 
     return {
         "iou": iou,
         "hd95": hd95,
-        "sensitivity": sens,
-        "specificity": spec,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
     }
-
 
 def init_metric_accumulators(num_eval_classes: int):
     return {
@@ -430,15 +466,25 @@ def init_metric_accumulators(num_eval_classes: int):
         "specificity_count": torch.zeros(num_eval_classes, dtype=torch.float64),
     }
 
-
 def update_metric_accumulators(acc, metric_name: str, values: torch.Tensor):
+    """
+    values expected shape: [B, C]
+    """
     values = values.detach().cpu().double()
+
+    if values.ndim == 1:
+        values = values.unsqueeze(0)
+
+    if values.ndim != 2:
+        raise ValueError(f"{metric_name} values must have shape [B,C], got {tuple(values.shape)}")
+
     valid = ~torch.isnan(values)
 
-    acc[f"{metric_name}_sum"] += torch.where(valid, values, torch.zeros_like(values)).sum(dim=0)
+    acc[f"{metric_name}_sum"] += torch.where(
+        valid, values, torch.zeros_like(values)
+    ).sum(dim=0)
+
     acc[f"{metric_name}_count"] += valid.sum(dim=0).double()
-
-
 def finalize_metric(acc, metric_name: str):
     return acc[f"{metric_name}_sum"] / torch.clamp(acc[f"{metric_name}_count"], min=1.0)
 # def train_one_epoch(

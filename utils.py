@@ -68,7 +68,9 @@ class CFG:
 
 
         self.raw = data
-        self.model_name = data.get("model", {}).get("name", "unet").lower()
+        model_cfg = data.get("model", {})
+        self.model_name = model_cfg.get("name", "unet").lower()
+        self.model_params = model_cfg.get(self.model_name, {})
         self.root = data["root"]
         self.modality = data.get("modality", "t1").lower()
         self.run_name = data.get("run_name", self.modality)
