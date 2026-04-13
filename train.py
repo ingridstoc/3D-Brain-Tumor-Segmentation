@@ -620,7 +620,7 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         # DEBUG MODE: autocast disabled
-        with torch.autocast(device_type="cuda", enabled=False):
+        with torch.autocast(device_type="cuda", enabled=(cfg.device.type == "cuda")):
             logits = model(img)
             if isinstance(logits, (list, tuple)):
                 logits = logits[0]
@@ -980,7 +980,7 @@ def main(cfg: CFG):
     model = build_model(cfg).to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
-    scaler = None
+    scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
 
     run_name = getattr(cfg, "run_name", cfg.modality)
 
@@ -1028,6 +1028,9 @@ def main(cfg: CFG):
             loader=val_loader,
             split_name="val",
         )
+        import gc
+        torch.cuda.empty_cache()
+        gc.collect()
 
         va_loss = val_metrics["val_loss"]
         va_dice = val_metrics["val_mean_tumor_dice"]
@@ -1117,7 +1120,9 @@ def main(cfg: CFG):
         loader=test_loader,
         split_name="test",
     )
-
+    import gc
+    torch.cuda.empty_cache()
+    gc.collect()
     print("\n=== BEST MODEL ===")
     print(f"Model: {cfg.model_name}")
     print(f"Best epoch: {best_epoch}")
