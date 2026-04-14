@@ -89,23 +89,26 @@ class LivePlotter:
 
     def update(
         self,
-        epochs_done: int,
+        train_epochs: list[int],
+        val_epochs: list[int],
         train_loss: list[float],
         val_loss: list[float],
         train_dice: list[float],
         val_dice: list[float],
-        train_pc: list[list[float]],  # shape [E, C]
-        val_pc: list[list[float]],    # shape [E, C]
+        train_pc: list[list[float]],
+        val_pc: list[list[float]],
     ):
-        x = list(range(1, epochs_done + 1))
-
-        # ---- 1) loss ----
+    # ---- 1) loss ----
         self.ax_loss.cla()
         self.ax_loss.set_title("Loss")
         self.ax_loss.set_xlabel("Epoch")
         self.ax_loss.set_ylabel("Loss")
-        self.ax_loss.plot(x, train_loss, label="train loss")
-        self.ax_loss.plot(x, val_loss, label="val loss")
+
+        if train_loss:
+            self.ax_loss.plot(train_epochs, train_loss, label="train loss")
+        if val_loss:
+            self.ax_loss.plot(val_epochs, val_loss, label="val loss")
+
         self.ax_loss.legend()
         self.ax_loss.grid(True)
 
@@ -114,42 +117,46 @@ class LivePlotter:
         self.ax_dice.set_title("Mean Tumor Dice (classes 1..3)")
         self.ax_dice.set_xlabel("Epoch")
         self.ax_dice.set_ylabel("Dice")
-        self.ax_dice.plot(x, train_dice, label="train dice")
-        self.ax_dice.plot(x, val_dice, label="val dice")
+
+        if train_dice:
+            self.ax_dice.plot(train_epochs, train_dice, label="train dice")
+        if val_dice:
+            self.ax_dice.plot(val_epochs, val_dice, label="val dice")
+
         self.ax_dice.legend()
         self.ax_dice.grid(True)
 
-        # ---- 3) per-class dice (8 curves) ----
+        # ---- 3) per-class dice ----
         self.ax_pc.cla()
         self.ax_pc.set_title("Dice per class (train + val)")
         self.ax_pc.set_xlabel("Epoch")
         self.ax_pc.set_ylabel("Dice")
 
-       # train curves (classes 1..3)
-        for i in range(self.C):   # i = 0,1,2
-            y = [row[i] for row in train_pc]
-            self.ax_pc.plot(x, y, label=f"train c{i+1}")
-
-    # val curves (classes 1..3)
         for i in range(self.C):
-            y = [row[i] for row in val_pc]
-            self.ax_pc.plot(x, y, label=f"val c{i+1}", linestyle="--")
+            if train_pc:
+                y_train = [row[i] for row in train_pc]
+                self.ax_pc.plot(train_epochs, y_train, label=f"train c{i+1}")
+
+        for i in range(self.C):
+            if val_pc:
+                y_val = [row[i] for row in val_pc]
+                self.ax_pc.plot(val_epochs, y_val, label=f"val c{i+1}", linestyle="--")
+
         self.ax_pc.legend(ncols=2, fontsize=8)
         self.ax_pc.grid(True)
 
-        # draw + allow UI refresh
-        self.fig_loss.canvas.draw(); self.fig_dice.canvas.draw(); self.fig_pc.canvas.draw()
+        self.fig_loss.canvas.draw()
+        self.fig_dice.canvas.draw()
+        self.fig_pc.canvas.draw()
         plt.pause(0.001)
 
-        # optional saving every epoch
         if self.save_dir:
             import os
             os.makedirs(self.save_dir, exist_ok=True)
             self.fig_loss.savefig(os.path.join(self.save_dir, "loss.png"), dpi=150)
             self.fig_dice.savefig(os.path.join(self.save_dir, "mean_dice.png"), dpi=150)
             self.fig_pc.savefig(os.path.join(self.save_dir, "per_class_dice.png"), dpi=150)
-# -------------------------
-# Model
+    # Model
 # -------------------------
 # def build_unet_3d(num_classes: int = 4) -> nn.Module:
 #     return UNet(
@@ -866,13 +873,13 @@ def train_one_epoch(
 #         }, f, indent=2)
 
 #     print(f"Saved summary to {summary_path}")
-
 @torch.no_grad()
 def evaluate_one_epoch(
     cfg: CFG,
     model: nn.Module,
     loader: DataLoader,
     split_name: str = "val",
+    compute_hd95: bool = True,
 ):
     model.eval()
 
@@ -900,6 +907,7 @@ def evaluate_one_epoch(
             logits = logits[0]
         elif logits.ndim == 6:
             logits = logits[:, 0]
+
         loss = cfg.loss_fn(logits, seg_for_loss)
         running_loss += float(loss.item())
 
@@ -907,7 +915,7 @@ def evaluate_one_epoch(
             logits,
             seg,
             cfg.num_classes,
-            cfg.include_bg_in_metric
+            cfg.include_bg_in_metric,
         )
 
         dice_sum += torch.nansum(mean_dice).item()
@@ -931,7 +939,7 @@ def evaluate_one_epoch(
         if cfg.compute_iou:
             update_metric_accumulators(extra_acc, "iou", extra["iou"])
 
-        if cfg.compute_hd95:
+        if compute_hd95:
             update_metric_accumulators(extra_acc, "hd95", extra["hd95"])
 
         if cfg.compute_sensitivity:
@@ -951,7 +959,7 @@ def evaluate_one_epoch(
         f"{split_name}_mean_tumor_dice": mean_tumor_dice,
         f"{split_name}_dice_per_class_mean": dice_pc_mean,
         f"{split_name}_iou_per_class_mean": finalize_metric(extra_acc, "iou") if cfg.compute_iou else None,
-        f"{split_name}_hd95_per_class_mean": finalize_metric(extra_acc, "hd95") if cfg.compute_hd95 else None,
+        f"{split_name}_hd95_per_class_mean": finalize_metric(extra_acc, "hd95") if compute_hd95 else None,
         f"{split_name}_sensitivity_per_class_mean": finalize_metric(extra_acc, "sensitivity") if cfg.compute_sensitivity else None,
         f"{split_name}_specificity_per_class_mean": finalize_metric(extra_acc, "specificity") if cfg.compute_specificity else None,
         f"{split_name}_elapsed_s": elapsed_s,
@@ -985,13 +993,15 @@ def main(cfg: CFG):
     run_name = getattr(cfg, "run_name", cfg.modality)
 
     history: Dict[str, List] = {
-        "train_loss": [],
-        "val_loss": [],
-        "train_dice": [],
-        "val_dice": [],
-        "train_pc": [],
-        "val_pc": [],
-    }
+    "train_epochs": [],
+    "val_epochs": [],
+    "train_loss": [],
+    "val_loss": [],
+    "train_dice": [],
+    "val_dice": [],
+    "train_pc": [],
+    "val_pc": [],
+}
 
     plotter = LivePlotter(
         num_classes=cfg.num_classes,
@@ -1008,10 +1018,12 @@ def main(cfg: CFG):
     best_val_specificity = None
 
     early_stopper = EarlyStopping(
-    patience=5,
-    min_delta=1e-3,
-    mode="max",
-)
+        patience=5,
+        min_delta=1e-3,
+        mode="max",
+    )
+
+    import gc
 
     for epoch in range(1, cfg.epochs + 1):
         tr_loss, tr_dice, tr_pc = train_one_epoch(
@@ -1022,95 +1034,112 @@ def main(cfg: CFG):
             scaler=scaler,
         )
 
-        val_metrics = evaluate_one_epoch(
-            cfg=cfg,
-            model=model,
-            loader=val_loader,
-            split_name="val",
-        )
-        import gc
-        torch.cuda.empty_cache()
-        gc.collect()
-
-        va_loss = val_metrics["val_loss"]
-        va_dice = val_metrics["val_mean_tumor_dice"]
-        va_pc = val_metrics["val_dice_per_class_mean"]
-
-        if va_dice > best_val_dice:
-            best_val_dice = va_dice
-            best_epoch = epoch
-            best_val_pc = va_pc.detach().cpu().tolist()
-            best_val_loss = va_loss
-            best_val_iou = (
-                val_metrics["val_iou_per_class_mean"].detach().cpu().tolist()
-                if val_metrics["val_iou_per_class_mean"] is not None else None
-            )
-            best_val_hd95 = (
-                val_metrics["val_hd95_per_class_mean"].detach().cpu().tolist()
-                if val_metrics["val_hd95_per_class_mean"] is not None else None
-            )
-            best_val_sensitivity = (
-                val_metrics["val_sensitivity_per_class_mean"].detach().cpu().tolist()
-                if val_metrics["val_sensitivity_per_class_mean"] is not None else None
-            )
-            best_val_specificity = (
-                val_metrics["val_specificity_per_class_mean"].detach().cpu().tolist()
-                if val_metrics["val_specificity_per_class_mean"] is not None else None
-            )
-
-            os.makedirs("checkpoints", exist_ok=True)
-            ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
-
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_dice": best_val_dice,
-                "val_pc": best_val_pc,
-                "val_loss": best_val_loss,
-                "val_iou": best_val_iou,
-                "val_hd95": best_val_hd95,
-                "val_sensitivity": best_val_sensitivity,
-                "val_specificity": best_val_specificity,
-                "model_name": cfg.model_name,
-                "model_params": cfg.model_params,
-            }, ckpt_path)
-
-            print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
-
-        if scheduler is not None:
-            if cfg.scheduler_name == "reduce_on_plateau":
-                scheduler.step(va_loss)
-            else:
-                scheduler.step()
-
+        history["train_epochs"].append(epoch)
         history["train_loss"].append(tr_loss)
-        history["val_loss"].append(va_loss)
         history["train_dice"].append(tr_dice)
-        history["val_dice"].append(va_dice)
         history["train_pc"].append(tr_pc.detach().cpu().tolist())
-        history["val_pc"].append(va_pc.detach().cpu().tolist())
 
-        plotter.update(
-            epochs_done=epoch,
-            train_loss=history["train_loss"],
-            val_loss=history["val_loss"],
-            train_dice=history["train_dice"],
-            val_dice=history["val_dice"],
-            train_pc=history["train_pc"],
-            val_pc=history["val_pc"],
-        )
+        do_validation = (epoch == 1) or (epoch % 2 == 0)
 
-        print(
-            f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
-            f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}"
-        )
-  
-        if early_stopper.step(va_dice):
-            print(f"Early stopping triggered at epoch {epoch}")
-            break
+        if do_validation:
+            compute_hd95_now = cfg.compute_hd95 and (epoch % 5 == 0)
+
+            val_metrics = evaluate_one_epoch(
+                cfg=cfg,
+                model=model,
+                loader=val_loader,
+                split_name="val",
+                compute_hd95=compute_hd95_now,
+            )
+
+            torch.cuda.empty_cache()
+            gc.collect()
+
+            va_loss = val_metrics["val_loss"]
+            va_dice = val_metrics["val_mean_tumor_dice"]
+            va_pc = val_metrics["val_dice_per_class_mean"]
+
+            if va_dice > best_val_dice:
+                best_val_dice = va_dice
+                best_epoch = epoch
+                best_val_pc = va_pc.detach().cpu().tolist()
+                best_val_loss = va_loss
+
+                best_val_iou = (
+                    val_metrics["val_iou_per_class_mean"].detach().cpu().tolist()
+                    if val_metrics["val_iou_per_class_mean"] is not None else None
+                )
+                best_val_hd95 = (
+                    val_metrics["val_hd95_per_class_mean"].detach().cpu().tolist()
+                    if val_metrics["val_hd95_per_class_mean"] is not None else None
+                )
+                best_val_sensitivity = (
+                    val_metrics["val_sensitivity_per_class_mean"].detach().cpu().tolist()
+                    if val_metrics["val_sensitivity_per_class_mean"] is not None else None
+                )
+                best_val_specificity = (
+                    val_metrics["val_specificity_per_class_mean"].detach().cpu().tolist()
+                    if val_metrics["val_specificity_per_class_mean"] is not None else None
+                )
+
+                os.makedirs("checkpoints", exist_ok=True)
+                ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
+
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "val_dice": best_val_dice,
+                    "val_pc": best_val_pc,
+                    "val_loss": best_val_loss,
+                    "val_iou": best_val_iou,
+                    "val_hd95": best_val_hd95,
+                    "val_sensitivity": best_val_sensitivity,
+                    "val_specificity": best_val_specificity,
+                    "model_name": cfg.model_name,
+                    "model_params": cfg.model_params,
+                }, ckpt_path)
+
+                print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
+
+            if scheduler is not None:
+                if cfg.scheduler_name == "reduce_on_plateau":
+                    scheduler.step(va_loss)
+                else:
+                    scheduler.step()
+
+            history["val_epochs"].append(epoch)
+            history["val_loss"].append(va_loss)
+            history["val_dice"].append(va_dice)
+            history["val_pc"].append(va_pc.detach().cpu().tolist())
+
+            plotter.update(
+                train_epochs=history["train_epochs"],
+                val_epochs=history["val_epochs"],
+                train_loss=history["train_loss"],
+                val_loss=history["val_loss"],
+                train_dice=history["train_dice"],
+                val_dice=history["val_dice"],
+                train_pc=history["train_pc"],
+                val_pc=history["val_pc"],
+            )
+
+            print(
+                f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
+                f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}"
+            )
+
+            if early_stopper.step(va_dice):
+                print(f"Early stopping triggered at epoch {epoch}")
+                break
+
+        else:
+            print(
+                f"[epoch {epoch}] train_loss={tr_loss:.4f} "
+                f"train_dice={tr_dice:.4f} (no validation this epoch)"
+            )
+
     ckpt_path = os.path.join("checkpoints", f"best_model_{run_name}.pth")
-
     ckpt = torch.load(ckpt_path, map_location=cfg.device)
     model.load_state_dict(ckpt["model_state_dict"])
 
@@ -1119,10 +1148,12 @@ def main(cfg: CFG):
         model=model,
         loader=test_loader,
         split_name="test",
+        compute_hd95=True,
     )
-    import gc
+
     torch.cuda.empty_cache()
     gc.collect()
+
     print("\n=== BEST MODEL ===")
     print(f"Model: {cfg.model_name}")
     print(f"Best epoch: {best_epoch}")
@@ -1143,7 +1174,7 @@ def main(cfg: CFG):
 
     os.makedirs("results", exist_ok=True)
     summary_path = os.path.join("results", f"{run_name}_best_metrics.json")
-    
+
     with open(summary_path, "w") as f:
         json.dump({
             "run_name": run_name,
@@ -1188,7 +1219,6 @@ def main(cfg: CFG):
         "test_sensitivity_per_class": test_metrics["test_sensitivity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_sensitivity_per_class_mean"] is not None else None,
         "test_specificity_per_class": test_metrics["test_specificity_per_class_mean"].detach().cpu().tolist() if test_metrics["test_specificity_per_class_mean"] is not None else None,
     }
-
 
 if __name__ == "__main__":
     cfg = CFG("config.yaml")

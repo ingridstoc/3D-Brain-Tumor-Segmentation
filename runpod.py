@@ -766,7 +766,7 @@ def full_dataset_exists(out_dir: Path) -> bool:
 def main():
     base_dir = Path(".").resolve()
     raw_dir = base_dir / "1"
-    out_dir = base_dir / "brats_full"
+    out_dir = base_dir / "brats_full_fixed"
 
     num_workers = int(os.environ.get("RUNPOD_NUM_WORKERS", min(8, os.cpu_count() or 4)))
 
@@ -779,17 +779,12 @@ def main():
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) Download raw dataset
     download_to_raw_folder(raw_dir)
-
-    # 2) Extract tar archives
     extract_all_tars(raw_dir)
     remove_ds_store(raw_dir)
 
-    # 3) Find case root
     case_root = locate_case_root(raw_dir)
 
-    # 4) Build or reuse full-volume dataset
     if full_dataset_exists(out_dir):
         existing = [p for p in out_dir.iterdir() if p.is_dir() and p.name.startswith("patient_")]
         print(f"[full] Multimodal full-volume dataset already exists ({len(existing)} patients). Skipping build step.")
@@ -797,8 +792,7 @@ def main():
         print("[full] Building multimodal full-volume dataset...")
         run_full_volume(case_root, out_dir, num_workers)
 
-    print("[done] brats_full dataset ready.")
-
-
+    print("[done] brats_full_fixed dataset ready.")
+    
 if __name__ == "__main__":
     main()

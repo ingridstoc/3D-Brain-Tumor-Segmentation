@@ -75,7 +75,7 @@
 #   none: {}
 
 
-root: "brats_full"
+root: "brats_full_fixed"
 modality: "multimodal_4ch"
 num_classes: 4
 batch_size: 1 # era 2 cand foloseam cropuri
@@ -105,7 +105,7 @@ model:
 
   unetr:
     in_channels: 4
-    img_size: [240, 240, 160]   # set this to your padded volume size
+    img_size: [192, 192, 160]
     feature_size: 16
     hidden_size: 768
     mlp_dim: 3072

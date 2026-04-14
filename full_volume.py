@@ -27,7 +27,41 @@ def pad_to_multiple(
         )
 
     return arr
+def center_crop_or_pad_3d(
+    arr: np.ndarray,
+    target_shape: tuple[int, int, int],
+    pad_value: float | int = 0,
+) -> np.ndarray:
+    """
+    Center crop if larger than target, center pad if smaller.
+    """
+    slices = []
+    pads = []
 
+    for dim, target in zip(arr.shape, target_shape):
+        if dim >= target:
+            start = (dim - target) // 2
+            end = start + target
+            slices.append(slice(start, end))
+            pads.append((0, 0))
+        else:
+            slices.append(slice(0, dim))
+            total_pad = target - dim
+            pad_before = total_pad // 2
+            pad_after = total_pad - pad_before
+            pads.append((pad_before, pad_after))
+
+    arr = arr[tuple(slices)]
+
+    if any(p != (0, 0) for p in pads):
+        arr = np.pad(
+            arr,
+            pads,
+            mode="constant",
+            constant_values=pad_value,
+        )
+
+    return arr
 # -----------------------------
 # Normalization
 # -----------------------------
@@ -112,11 +146,13 @@ def process_case_full_from_disk(
     t1ce = normalize_brats_volume(t1ce)
     t2 = normalize_brats_volume(t2)
     flair = normalize_brats_volume(flair)
-    t1 = pad_to_multiple(t1, multiple=16, pad_value=0.0)
-    t1ce = pad_to_multiple(t1ce, multiple=16, pad_value=0.0)
-    t2 = pad_to_multiple(t2, multiple=16, pad_value=0.0)
-    flair = pad_to_multiple(flair, multiple=16, pad_value=0.0)
-    seg = pad_to_multiple(seg, multiple=16, pad_value=0)
+    target_shape = (192, 192, 160)
+
+    t1 = center_crop_or_pad_3d(t1, target_shape, pad_value=0.0)
+    t1ce = center_crop_or_pad_3d(t1ce, target_shape, pad_value=0.0)
+    t2 = center_crop_or_pad_3d(t2, target_shape, pad_value=0.0)
+    flair = center_crop_or_pad_3d(flair, target_shape, pad_value=0.0)
+    seg = center_crop_or_pad_3d(seg, target_shape, pad_value=0)
 
     out_patient_dir = out_dir / f"patient_{case_id}"
     out_patient_dir.mkdir(parents=True, exist_ok=True)
