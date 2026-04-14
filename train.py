@@ -156,28 +156,7 @@ class LivePlotter:
             self.fig_loss.savefig(os.path.join(self.save_dir, "loss.png"), dpi=150)
             self.fig_dice.savefig(os.path.join(self.save_dir, "mean_dice.png"), dpi=150)
             self.fig_pc.savefig(os.path.join(self.save_dir, "per_class_dice.png"), dpi=150)
-    # Model
-# -------------------------
-# def build_unet_3d(num_classes: int = 4) -> nn.Module:
-#     return UNet(
-#         spatial_dims=3,
-#         in_channels=1,
-#         out_channels=num_classes,
-#         channels=(32, 64, 128, 256, 320),
-#         strides=(2, 2, 2, 2),
-#         num_res_units=2,
-#         norm="INSTANCE",
-#     )
-# def build_unet_3d(in_channels: int = 4, num_classes: int = 4) -> nn.Module:
-#     return UNet(
-#         spatial_dims=3,
-#         in_channels=in_channels,
-#         out_channels=num_classes,
-#         channels=(16, 32, 64, 128, 256),
-#         strides=(2, 2, 2, 2),
-#         num_res_units=2,
-#         norm="INSTANCE",
-#     )
+
 def build_unet_3d(cfg: CFG) -> nn.Module:
     p = cfg.model_params
     return UNet(
@@ -254,36 +233,6 @@ def build_model(cfg: CFG) -> nn.Module:
         return build_dynunet_3d(cfg)
 
     raise ValueError(f"Unknown model name: {cfg.model_name}")
-
-# def build_segresnet_3d(num_classes: int = 4) -> nn.Module:
-#     return SegResNet(
-#         spatial_dims=3,
-#         init_filters=32,
-#         in_channels=1,
-#         out_channels=num_classes,
-#         dropout_prob=0.2,
-#         blocks_down=(1, 2, 2, 4),
-#         blocks_up=(1, 1, 1),
-#     )
-
-
-# def build_model(cfg: CFG) -> nn.Module:
-#     model_name = getattr(cfg, "model_name", "unet").lower()
-
-#     if model_name == "unet":
-#         return build_unet_3d(num_classes=cfg.num_classes)
-
-#     if model_name == "segresnet":
-#         return build_segresnet_3d(num_classes=cfg.num_classes)
-
-#     raise ValueError(f"Unknown model name: {model_name}")
-
-# def build_model(cfg) -> nn.Module:
-#     return build_unet_3d(
-#         in_channels=4,
-#         num_classes=cfg.num_classes,
-#     )
-
 
 import torch.nn.functional as F
 
@@ -494,92 +443,6 @@ def update_metric_accumulators(acc, metric_name: str, values: torch.Tensor):
     acc[f"{metric_name}_count"] += valid.sum(dim=0).double()
 def finalize_metric(acc, metric_name: str):
     return acc[f"{metric_name}_sum"] / torch.clamp(acc[f"{metric_name}_count"], min=1.0)
-# def train_one_epoch(
-#     cfg: CFG,
-#     model: nn.Module,
-#     train_loader: DataLoader,
-#     optimizer,
-#     scaler: torch.amp.GradScaler
-# ):
-#     model.train()
-#     running_loss = 0.0
-#     dice_sum = 0.0
-#     dice_count = 0
-
-#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
-#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
-#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
-#     eps = 1e-6
-
-#     start = perf_counter()
-#     for idx, (img, seg) in enumerate(train_loader):
-#         if idx % 200 == 0 and idx > 0:
-#             print(f"reached {idx} index")
-#         if idx == len(train_loader) - 1:
-#             end = perf_counter()
-#             elapsed_s = (end - start)
-#             # print(f"Time taken: {elapsed_s:.3f}s")
-
-#         # -------------------------------------------------
-#         # apply augmentations on CPU before sending to GPU
-#         # img expected shape [B,1,H,W,D]
-#         # seg expected shape [B,H,W,D]
-#         # -------------------------------------------------
-#         img = img.to(cfg.device, non_blocking=True)
-#         seg = seg.to(cfg.device, non_blocking=True)
-
-#         # MONAI DiceCELoss with to_onehot_y=True expects target shape [B,1,H,W,D]
-#         seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
-
-#         optimizer.zero_grad(set_to_none=True)
-
-#         with torch.autocast(device_type="cuda", enabled=("cuda" in str(cfg.device))):
-#             logits = model(img)
-#             loss = cfg.loss_fn(logits, seg_for_loss)
-#         if not torch.isfinite(img).all():
-#             print("Non-finite image detected")
-#             print("img min/max:", img.min().item(), img.max().item())
-#             raise RuntimeError("Image contains NaN or inf")
-
-#         if not torch.isfinite(seg).all():
-#             print("Non-finite seg detected")
-#             raise RuntimeError("Seg contains NaN or inf")
-
-#         if scaler is not None and scaler.is_enabled():
-#             scaler.scale(loss).backward()
-#             scaler.step(optimizer)
-#             scaler.update()
-#         else:
-#             loss.backward()
-#             optimizer.step()
-#         running_loss += float(loss.item())
-
-#         dice_per_class, mean_dice = dice_from_logits(
-#             logits,
-#             seg,
-#             cfg.num_classes,
-#             cfg.include_bg_in_metric
-#         )
-#         dice_sum += torch.nansum(mean_dice).item()
-#         dice_count += (~torch.isnan(mean_dice)).sum().item()
-
-#         d_compact = dice_per_class[:, 1:].detach().cpu().double()
-#         valid = ~torch.isnan(d_compact)
-
-#         per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
-#         per_class_count += valid.sum(dim=0).double()
-
-#     train_loss = running_loss / max(1, len(train_loader))
-#     train_mean_tumor_dice = dice_sum / max(1, dice_count)
-#     train_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
-
-#     # print(
-#     #     f"train_loss={train_loss:.4f} "
-#     #     f"train_mean_tumor_dice={train_mean_tumor_dice:.4f} "
-#     #     f"train_dice_per_class_mean={train_dice_per_class_mean.tolist()}"
-#     # )
-#     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
-
 
 def train_one_epoch(
     cfg: CFG,
@@ -684,202 +547,16 @@ def train_one_epoch(
 
     return train_loss, train_mean_tumor_dice, train_dice_per_class_mean
 
-# @torch.no_grad()
-# def validate_one_epoch(
-#     cfg: CFG,
-#     model: nn.Module,
-#     val_loader: DataLoader,
-# ):
-#     model.eval()
-
-#     running_loss = 0.0
-#     dice_sum = 0.0
-#     dice_count = 0
-
-   
-#     num_plot_classes = cfg.num_classes - 1  # classes 1..3
-#     per_class_sum = torch.zeros(num_plot_classes, dtype=torch.float64)
-#     per_class_count = torch.zeros(num_plot_classes, dtype=torch.float64)
- 
-
-#     start = perf_counter()
-
-#     for idx, (img, seg) in enumerate(val_loader):
-#         if idx == len(val_loader) - 1:
-#             end = perf_counter()
-#             elapsed_ms = (end - start)
-#             #print(f"Time taken: {elapsed_ms:.3f}s")
-
-#         img = img.to(cfg.device, non_blocking=True)
-#         seg = seg.to(cfg.device, non_blocking=True)
-
-#         seg_for_loss = seg.unsqueeze(1) if seg.ndim == 4 else seg
-
-#         logits = model(img)
-#         loss = cfg.loss_fn(logits, seg_for_loss)
-#         running_loss += float(loss.item())
-
-#         dice_per_class, mean_dice = dice_from_logits(
-#             logits,
-#             seg,
-#             cfg.num_classes,
-#             cfg.include_bg_in_metric
-#         )
-
-#         dice_sum += torch.nansum(mean_dice).item()
-#         dice_count += (~torch.isnan(mean_dice)).sum().item()
-
-#         d_compact = dice_per_class[:, 1:].detach().cpu().double()
-#         valid = ~torch.isnan(d_compact)
-
-#         per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
-#         per_class_count += valid.sum(dim=0).double()
-        
-
-
-#     elapsed_s = perf_counter() - start
-
-#     val_loss = running_loss / max(1, len(val_loader))
-#     val_mean_tumor_dice = dice_sum / max(1, dice_count)
-#     val_dice_per_class_mean = per_class_sum / torch.clamp(per_class_count, min=1.0)
-
-    # print(
-    #     f"val_loss={val_loss:.4f} "
-    #     f"val_mean_tumor_dice={val_mean_tumor_dice:.4f} "
-    #     f"val_dice_per_class_mean={val_dice_per_class_mean.tolist()} "
-    #     f"time={elapsed_s:.3f}s"
-    # )
-
-    # return val_loss, val_mean_tumor_dice, val_dice_per_class_mean
-
-# -------------------------
-# Main pipeline
-# -------------------------
-# def main(cfg : CFG):
-#     #print("optimizer_name:", cfg.optimizer_name)
-#     #print("optimizer_params:", cfg.optimizer_params)
-#     #print("scheduler_name:", cfg.scheduler_name)
-#     #print("scheduler_params:", cfg.scheduler_params)
-#     print(f"Training modality: {cfg.modality}")
-#     seed_everything(cfg.seed)
-#     #print("Device:", cfg.device)
-#     patient_names = sorted([
-#         os.path.join(cfg.root, d) for d in os.listdir(cfg.root)
-#         if os.path.isdir(os.path.join(cfg.root, d))
-#     ])
-#     train_loader, val_loader = build_loaders_for_modality(
-#         cfg=cfg, patient_names=patient_names)
-    
-#     model = build_unet_3d(num_classes=cfg.num_classes)
-#     model = model.to(cfg.device)
-#     optimizer = build_optimizer(cfg, model)
-#     scheduler = build_scheduler(cfg, optimizer)
-#     #scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
-#     scaler=None
-
-#     history : Dict[str, List] = {
-#         "train_loss": [],
-#         "val_loss": [],
-#         "train_dice": [],
-#         "val_dice": [],
-#         "train_pc": [],  # list of list len C
-#         "val_pc": [],
-#     }
-
-#     # plotter = LivePlotter(num_classes=cfg.num_classes, save_dir="live_plots")
-    
-#     plotter = LivePlotter(
-#         num_classes=cfg.num_classes,
-#         save_dir=os.path.join("live_plots", cfg.modality),
-#     )
-#     best_val_dice = -1.0
-#     best_epoch = -1
-#     best_val_pc = None
-
-#     for epoch in range(1, cfg.epochs + 1):
-#         tr_loss, tr_dice, tr_pc = train_one_epoch(
-#             cfg=cfg, model=model, train_loader=train_loader, optimizer=optimizer, scaler=scaler
-#         )
-#         va_loss, va_dice, va_pc = validate_one_epoch(cfg=cfg, model=model, val_loader=val_loader)
-
-#         # check if this is the best model so far
-#         if va_dice > best_val_dice:
-#             best_val_dice = va_dice
-#             best_epoch = epoch
-#             best_val_pc = va_pc.detach().cpu().tolist()
-
-#             # save checkpoint
-#             os.makedirs("checkpoints", exist_ok=True)
-#             # ckpt_path = f"checkpoints/best_model_t1.pth"
-#             ckpt_path = os.path.join("checkpoints", f"best_model_{cfg.modality}.pth")
-
-#             torch.save({
-#                 "epoch": epoch,
-#                 "model_state_dict": model.state_dict(),
-#                 "optimizer_state_dict": optimizer.state_dict(),
-#                 "val_dice": best_val_dice,
-#                 "val_pc": best_val_pc,
-#             }, ckpt_path)
-
-#             print(f"[checkpoint] saved new best model at epoch {epoch} with val_dice={va_dice:.4f}")
-
-#         # print("tr_pc =", tr_pc.tolist())
-#         # print("va_pc =", va_pc.tolist())
-#         # print("tr_dice =", tr_dice)
-#         # print("va_dice =", va_dice)
-
-#         if scheduler is not None:
-#             if cfg.scheduler_name == "reduce_on_plateau":
-#                 scheduler.step(va_loss)
-#             else:
-#                 scheduler.step()
-        
-#         history["train_loss"].append(tr_loss)
-#         history["val_loss"].append(va_loss)
-#         history["train_dice"].append(tr_dice)
-#         history["val_dice"].append(va_dice)
-
-#         # tensors -> python lists
-#         history["train_pc"].append(tr_pc.detach().cpu().tolist())
-#         history["val_pc"].append(va_pc.detach().cpu().tolist())
-
-#         plotter.update(
-#             epochs_done=epoch,
-#             train_loss=history["train_loss"],
-#             val_loss=history["val_loss"],
-#             train_dice=history["train_dice"],
-#             val_dice=history["val_dice"],
-#             train_pc=history["train_pc"],
-#             val_pc=history["val_pc"],
-#         )
-
-#         print(f"[epoch {epoch}] train_loss={tr_loss:.4f} val_loss={va_loss:.4f} "
-#               f"train_dice={tr_dice:.4f} val_dice={va_dice:.4f}")
-              
-#     print("\n=== BEST MODEL ===")   
-#     print(f"Best epoch: {best_epoch}")
-#     print(f"Best val Dice: {best_val_dice:.4f}")
-#     print(f"Best per-class Dice: {best_val_pc}")
-
-#     os.makedirs("results", exist_ok=True)
-#     summary_path = os.path.join("results", f"{cfg.modality}_best_metrics.json")
-
-#     with open(summary_path, "w") as f:
-#         json.dump({
-#             "modality": cfg.modality,
-#             "best_epoch": best_epoch,
-#             "best_val_dice": best_val_dice,
-#             "best_val_pc": best_val_pc,
-#         }, f, indent=2)
-
-#     print(f"Saved summary to {summary_path}")
 @torch.no_grad()
 def evaluate_one_epoch(
     cfg: CFG,
     model: nn.Module,
     loader: DataLoader,
     split_name: str = "val",
+    compute_iou: bool = True,
     compute_hd95: bool = True,
+    compute_sensitivity: bool = True,
+    compute_specificity: bool = True,
 ):
     model.eval()
 
@@ -928,25 +605,27 @@ def evaluate_one_epoch(
         per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
         per_class_count += valid.sum(dim=0).double()
 
-        extra = compute_extra_metrics(
-            logits=logits,
-            seg=seg,
-            num_classes=cfg.num_classes,
-            include_bg=cfg.include_bg_in_metric,
-            hd95_percentile=cfg.hd95_percentile,
-        )
+        # Only compute extra metrics if at least one of them is requested
+        if compute_iou or compute_hd95 or compute_sensitivity or compute_specificity:
+            extra = compute_extra_metrics(
+                logits=logits,
+                seg=seg,
+                num_classes=cfg.num_classes,
+                include_bg=cfg.include_bg_in_metric,
+                hd95_percentile=cfg.hd95_percentile,
+            )
 
-        if cfg.compute_iou:
-            update_metric_accumulators(extra_acc, "iou", extra["iou"])
+            if compute_iou:
+                update_metric_accumulators(extra_acc, "iou", extra["iou"])
 
-        if compute_hd95:
-            update_metric_accumulators(extra_acc, "hd95", extra["hd95"])
+            if compute_hd95:
+                update_metric_accumulators(extra_acc, "hd95", extra["hd95"])
 
-        if cfg.compute_sensitivity:
-            update_metric_accumulators(extra_acc, "sensitivity", extra["sensitivity"])
+            if compute_sensitivity:
+                update_metric_accumulators(extra_acc, "sensitivity", extra["sensitivity"])
 
-        if cfg.compute_specificity:
-            update_metric_accumulators(extra_acc, "specificity", extra["specificity"])
+            if compute_specificity:
+                update_metric_accumulators(extra_acc, "specificity", extra["specificity"])
 
     elapsed_s = perf_counter() - start
 
@@ -958,10 +637,10 @@ def evaluate_one_epoch(
         f"{split_name}_loss": mean_loss,
         f"{split_name}_mean_tumor_dice": mean_tumor_dice,
         f"{split_name}_dice_per_class_mean": dice_pc_mean,
-        f"{split_name}_iou_per_class_mean": finalize_metric(extra_acc, "iou") if cfg.compute_iou else None,
+        f"{split_name}_iou_per_class_mean": finalize_metric(extra_acc, "iou") if compute_iou else None,
         f"{split_name}_hd95_per_class_mean": finalize_metric(extra_acc, "hd95") if compute_hd95 else None,
-        f"{split_name}_sensitivity_per_class_mean": finalize_metric(extra_acc, "sensitivity") if cfg.compute_sensitivity else None,
-        f"{split_name}_specificity_per_class_mean": finalize_metric(extra_acc, "specificity") if cfg.compute_specificity else None,
+        f"{split_name}_sensitivity_per_class_mean": finalize_metric(extra_acc, "sensitivity") if compute_sensitivity else None,
+        f"{split_name}_specificity_per_class_mean": finalize_metric(extra_acc, "specificity") if compute_specificity else None,
         f"{split_name}_elapsed_s": elapsed_s,
     }
 
@@ -970,8 +649,6 @@ def evaluate_one_epoch(
 import json
 import os
 from typing import Dict, List
-
-
 def main(cfg: CFG):
     print("Training modality: multimodal_4ch")
     seed_everything(cfg.seed)
@@ -993,15 +670,15 @@ def main(cfg: CFG):
     run_name = getattr(cfg, "run_name", cfg.modality)
 
     history: Dict[str, List] = {
-    "train_epochs": [],
-    "val_epochs": [],
-    "train_loss": [],
-    "val_loss": [],
-    "train_dice": [],
-    "val_dice": [],
-    "train_pc": [],
-    "val_pc": [],
-}
+        "train_epochs": [],
+        "val_epochs": [],
+        "train_loss": [],
+        "val_loss": [],
+        "train_dice": [],
+        "val_dice": [],
+        "train_pc": [],
+        "val_pc": [],
+    }
 
     plotter = LivePlotter(
         num_classes=cfg.num_classes,
@@ -1042,14 +719,15 @@ def main(cfg: CFG):
         do_validation = (epoch == 1) or (epoch % 2 == 0)
 
         if do_validation:
-            compute_hd95_now = cfg.compute_hd95 and (epoch % 5 == 0)
-
             val_metrics = evaluate_one_epoch(
                 cfg=cfg,
                 model=model,
                 loader=val_loader,
                 split_name="val",
-                compute_hd95=compute_hd95_now,
+                compute_iou=False,
+                compute_hd95=False,
+                compute_sensitivity=False,
+                compute_specificity=False,
             )
 
             torch.cuda.empty_cache()
@@ -1134,6 +812,17 @@ def main(cfg: CFG):
                 break
 
         else:
+            plotter.update(
+                train_epochs=history["train_epochs"],
+                val_epochs=history["val_epochs"],
+                train_loss=history["train_loss"],
+                val_loss=history["val_loss"],
+                train_dice=history["train_dice"],
+                val_dice=history["val_dice"],
+                train_pc=history["train_pc"],
+                val_pc=history["val_pc"],
+            )
+
             print(
                 f"[epoch {epoch}] train_loss={tr_loss:.4f} "
                 f"train_dice={tr_dice:.4f} (no validation this epoch)"
@@ -1148,7 +837,10 @@ def main(cfg: CFG):
         model=model,
         loader=test_loader,
         split_name="test",
+        compute_iou=True,
         compute_hd95=True,
+        compute_sensitivity=True,
+        compute_specificity=True,
     )
 
     torch.cuda.empty_cache()

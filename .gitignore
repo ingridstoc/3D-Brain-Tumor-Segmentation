@@ -12,3 +12,4 @@ checkpoints/
 *.pt
 brats_crops
 brats_full
+brats_full_fixed
