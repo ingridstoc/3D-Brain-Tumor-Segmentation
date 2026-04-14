@@ -10,7 +10,7 @@ device: "auto"
 run_name: "multimodal_4ch_full"
 
 model:
-  name: "dynunet"   # unet | segresnet | unetr | dynunet
+  name: "unetr"   # unet | segresnet | unetr | dynunet
 
   unet:
     in_channels: 4
