@@ -7,6 +7,12 @@ scp *.pth root@69.30.85.204:/root/3D-Brain-Tumor-Segmentation
 augmentari din monai, din lucrari loss fct
 pt random search cate trialuri ar trebui sa fac, 16?
 
+vot universal fata de pondere
+fac 5 retele
+daca fac de la poate, ce metrica iau pt ponderi si cum aleg de fapt ponderile
+cum imi ia cele 4 modalitati, le ia pe toate 4 deodata sau calup 1250*4 si nu mai stie care masca a carui pacient e
+
+
 
 single-model baseline with 3D U-Net
 stronger CNN baseline with SegResNet
