@@ -10,7 +10,7 @@ device: "auto"
 run_name: "multimodal_4ch_full"
 
 model:
-  name: "dynunet"   # unet | segresnet | unetr | dynunet
+  name: "unetr"   # unet | segresnet | unetr | dynunet
 
   unet:
     in_channels: 4
@@ -57,7 +57,7 @@ metrics:
   compute_specificity: true
   eval_on_train: false   # keep false; train metrics stay Dice-only
 
-val_subset_size: 50
+val_subset_size: 100
 augmentations:
   name: "weak"
 
