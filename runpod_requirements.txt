@@ -14,6 +14,7 @@ kagglehub==1.0.0
 kagglesdk==0.1.16
 kiwisolver==1.4.9
 MarkupSafe==3.0.3
+einops==0.8.0
 matplotlib==3.10.8
 numpy==1.26.4
 scipy==1.11.4

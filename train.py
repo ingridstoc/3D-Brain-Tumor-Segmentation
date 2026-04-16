@@ -489,8 +489,10 @@ def train_one_epoch(
 
         optimizer.zero_grad(set_to_none=True)
 
-        # DEBUG MODE: autocast disabled
-        with torch.autocast(device_type="cuda", enabled=(cfg.device.type == "cuda")):
+        # unetr modif cele 2 linii le scot
+        # with torch.autocast(device_type="cuda", enabled=(cfg.device.type == "cuda")):
+        amp_enabled = (cfg.device.type == "cuda") and (cfg.model_name != "unetr")
+        with torch.autocast(device_type="cuda", enabled=amp_enabled):
             logits = model(img)
             if isinstance(logits, (list, tuple)):
                 logits = logits[0]
@@ -665,7 +667,10 @@ def main(cfg: CFG):
     model = build_model(cfg).to(cfg.device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
-    scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
+    # scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
+    # unetr scot cele 2 linii
+    amp_enabled = (cfg.device.type == "cuda") and (cfg.model_name != "unetr")
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     run_name = getattr(cfg, "run_name", cfg.modality)
 

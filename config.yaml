@@ -57,14 +57,20 @@ metrics:
   compute_specificity: true
   eval_on_train: false   # keep false; train metrics stay Dice-only
 
-val_subset_size: 100
+val_subset_size: 50
 augmentations:
   name: "weak"
 
+# optimizer:
+#   name: adamw
+#   adamw:
+#     lr: 0.0003
+#     weight_decay: 0.0001
+# for unetr
 optimizer:
   name: adamw
   adamw:
-    lr: 0.0003
+    lr: 0.0001
     weight_decay: 0.0001
 
   adam:
