@@ -3,7 +3,7 @@ from monai.networks.nets import UNet, SegResNet
 import os
 from typing import Dict, List, Tuple
 from monai.metrics import HausdorffDistanceMetric, MeanIoU
-from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet
+from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet, SwinUNETR
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -181,7 +181,19 @@ def build_segresnet_3d(cfg: CFG) -> nn.Module:
         blocks_down=tuple(p.get("blocks_down", [1, 2, 2, 4])),
         blocks_up=tuple(p.get("blocks_up", [1, 1, 1])),
     )
-
+def build_swinunetr_3d(cfg: CFG) -> nn.Module:
+    p = cfg.model_params
+    return SwinUNETR(
+        img_size=tuple(p.get("img_size", [192, 192, 160])),
+        in_channels=p.get("in_channels", 4),
+        out_channels=cfg.num_classes,
+        feature_size=p.get("feature_size", 24),
+        use_checkpoint=p.get("use_checkpoint", False),
+        drop_rate=p.get("drop_rate", 0.0),
+        attn_drop_rate=p.get("attn_drop_rate", 0.0),
+        dropout_path_rate=p.get("dropout_path_rate", 0.0),
+        normalize=p.get("normalize", True),
+    )
 
 def build_unetr_3d(cfg: CFG) -> nn.Module:
     p = cfg.model_params
@@ -232,10 +244,16 @@ def build_model(cfg: CFG) -> nn.Module:
     if model_name == "dynunet":
         return build_dynunet_3d(cfg)
 
+    if model_name == "swinunetr":
+        return build_swinunetr_3d(cfg)
+
     raise ValueError(f"Unknown model name: {cfg.model_name}")
 
 import torch.nn.functional as F
 
+def should_use_amp(cfg: CFG) -> bool:
+    no_amp_models = {"unetr", "swinunetr"}
+    return (cfg.device.type == "cuda") and (cfg.model_name.lower() not in no_amp_models)
 
 def dice_from_logits(
     logits: torch.Tensor,
@@ -491,7 +509,8 @@ def train_one_epoch(
 
         # unetr modif cele 2 linii le scot
         # with torch.autocast(device_type="cuda", enabled=(cfg.device.type == "cuda")):
-        amp_enabled = (cfg.device.type == "cuda") and (cfg.model_name != "unetr")
+      
+        amp_enabled = should_use_amp(cfg)
         with torch.autocast(device_type="cuda", enabled=amp_enabled):
             logits = model(img)
             if isinstance(logits, (list, tuple)):
@@ -669,7 +688,7 @@ def main(cfg: CFG):
     scheduler = build_scheduler(cfg, optimizer)
     # scaler = torch.amp.GradScaler("cuda", enabled=(cfg.device.type == "cuda"))
     # unetr scot cele 2 linii
-    amp_enabled = (cfg.device.type == "cuda") and (cfg.model_name != "unetr")
+    amp_enabled = should_use_amp(cfg)
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     run_name = getattr(cfg, "run_name", cfg.modality)

@@ -1,365 +1,533 @@
 from __future__ import annotations
+
 import json
 import os
+from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
-from monai.networks.nets import UNet
+from monai.metrics import HausdorffDistanceMetric, MeanIoU
 
-from dataset import make_patient_splits
+from dataset import BraTSMultiModalDataset, make_patient_splits
 from utils import CFG, seed_everything
+from train import build_model
 
 
-# -------------------------
-# Model
-# -------------------------
-def build_unet_3d(num_classes: int = 4) -> nn.Module:
-    return UNet(
-        spatial_dims=3,
-        in_channels=1,
-        out_channels=num_classes,
-        channels=(32, 64, 128, 256, 320),
-        strides=(2, 2, 2, 2),
-        num_res_units=2,
-        norm="INSTANCE",
-    )
+# =========================================================
+# Configurable model list
+# =========================================================
+
+MODEL_SPECS = [
+    {
+        "name": "unet",
+        "config": "configs/unet.yaml",
+        "checkpoint": "checkpoints/best_model_unet_4ch.pth",
+        "val_eval_json": "eval_outputs/unet_4ch/val/case_metrics.json",
+    },
+    {
+        "name": "segresnet",
+        "config": "configs/segresnet.yaml",
+        "checkpoint": "checkpoints/best_model_segresnet_4ch.pth",
+        "val_eval_json": "eval_outputs/segresnet_4ch/val/case_metrics.json",
+    },
+    {
+        "name": "dynunet",
+        "config": "configs/dynunet.yaml",
+        "checkpoint": "checkpoints/best_model_dynunet_4ch.pth",
+        "val_eval_json": "eval_outputs/dynunet_4ch/val/case_metrics.json",
+    },
+    {
+        "name": "unetr",
+        "config": "configs/unetr.yaml",
+        "checkpoint": "checkpoints/best_model_unetr_4ch.pth",
+        "val_eval_json": "eval_outputs/unetr_4ch/val/case_metrics.json",
+    },
+    {
+        "name": "swinunetr",
+        "config": "configs/swinunetr.yaml",
+        "checkpoint": "checkpoints/best_model_swinunetr_4ch.pth",
+        "val_eval_json": "eval_outputs/swinunetr_4ch/val/case_metrics.json",
+    },
+]
 
 
-def load_model(checkpoint_path: str, device: torch.device, num_classes: int = 4) -> nn.Module:
-    model = build_unet_3d(num_classes=num_classes).to(device)
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+# =========================================================
+# Loading
+# =========================================================
+
+def load_model_from_spec(spec: Dict, device: torch.device):
+    cfg = CFG(spec["config"])
+    model = build_model(cfg).to(device)
+
+    ckpt = torch.load(spec["checkpoint"], map_location=device)
+    if "model_state_dict" in ckpt:
+        model.load_state_dict(ckpt["model_state_dict"])
+    else:
+        model.load_state_dict(ckpt)
+
     model.eval()
-    return model
+    return model, cfg
 
 
-# -------------------------
-# Ensemble dataset
-# -------------------------
-class BraTSEnsembleDataset(Dataset):
-    def __init__(self, patient_folders: List[str], include_random_crops: bool = False):
-        self.samples = []
-
-        crop_names = ["crop"] if not include_random_crops else ["crop", "rand1", "rand2", "rand3", "rand4"]
-
-        for patient_folder in patient_folders:
-            case_id = os.path.basename(patient_folder).replace("patient_", "")
-
-            for crop in crop_names:
-                paths = {
-                    "t1": os.path.join(patient_folder, f"{case_id}_T1_{crop}.npy"),
-                    "t1ce": os.path.join(patient_folder, f"{case_id}_T1ce_{crop}.npy"),
-                    "t2": os.path.join(patient_folder, f"{case_id}_T2_{crop}.npy"),
-                    "flair": os.path.join(patient_folder, f"{case_id}_FLAIR_{crop}.npy"),
-                    "seg": os.path.join(patient_folder, f"{case_id}_seg_{crop}.npy"),
-                }
-
-                if all(os.path.exists(p) for p in paths.values()):
-                    self.samples.append(paths)
-
-        if not self.samples:
-            raise RuntimeError("No ensemble samples found.")
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx: int):
-        s = self.samples[idx]
-
-        t1 = np.load(s["t1"]).astype(np.float32)[None, ...]
-        t1ce = np.load(s["t1ce"]).astype(np.float32)[None, ...]
-        t2 = np.load(s["t2"]).astype(np.float32)[None, ...]
-        flair = np.load(s["flair"]).astype(np.float32)[None, ...]
-        seg = np.load(s["seg"]).astype(np.int64)
-
-        return (
-            torch.from_numpy(t1),
-            torch.from_numpy(t1ce),
-            torch.from_numpy(t2),
-            torch.from_numpy(flair),
-            torch.from_numpy(seg),
-        )
-
-
-# -------------------------
+# =========================================================
 # Metrics
-# -------------------------
-def dice_from_probs(
-    probs: torch.Tensor,
-    seg: torch.Tensor,
-    num_classes: int,
-    include_bg: bool = True,
-    eps: float = 1e-6,
-):
-    pred = torch.argmax(probs, dim=1)  # [B,H,W,D]
+# =========================================================
 
-    gt = seg if seg.ndim == 4 else seg.squeeze(1)
+def sanitize_metric_tensor(x: torch.Tensor) -> torch.Tensor:
+    x = x.clone()
+    x[torch.isinf(x)] = torch.nan
+    return x
 
-    pred_1h = F.one_hot(pred, num_classes=num_classes).permute(0, 4, 1, 2, 3).float()
-    gt_1h = F.one_hot(gt, num_classes=num_classes).permute(0, 4, 1, 2, 3).float()
 
+def labels_to_onehot(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
+    # labels: [B,H,W,D]
+    onehot = F.one_hot(labels.long(), num_classes=num_classes)
+    onehot = onehot.permute(0, 4, 1, 2, 3).float()
+    return onehot
+
+
+def dice_from_onehot(pred_1h: torch.Tensor, gt_1h: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     inter = (pred_1h * gt_1h).sum(dim=(2, 3, 4))
     denom = pred_1h.sum(dim=(2, 3, 4)) + gt_1h.sum(dim=(2, 3, 4))
-
     dice = (2.0 * inter + eps) / (denom + eps)
     dice[denom < eps] = torch.nan
-
-    dice_for_mean = dice if include_bg else dice[:, 1:]
-    mean_dice = torch.nanmean(dice_for_mean, dim=1)
-
-    return dice, mean_dice
+    return dice
 
 
-# -------------------------
-# Weights
-# -------------------------
-def build_classwise_weights() -> torch.Tensor:
+def build_brats_region_masks_from_labels(labels: torch.Tensor) -> torch.Tensor:
     """
-    rows = [t1, t1ce, t2, flair]
-    cols = [bg, c1, c2, c3]
+    labels: [B,H,W,D]
+    returns [B,3,H,W,D] in order WT, TC, ET
     """
-    return torch.tensor([
-        [0.25, 0.2367, 0.2288, 0.2277],  # t1
-        [0.25, 0.2968, 0.2474, 0.3099],  # t1ce
-        [0.25, 0.2391, 0.2580, 0.2323],  # t2
-        [0.25, 0.2274, 0.2658, 0.2300],  # flair
-    ], dtype=torch.float32)
+    wt = (labels > 0)
+    tc = (labels == 1) | (labels == 3)
+    et = (labels == 3)
+
+    return torch.stack([wt, tc, et], dim=1).float()
 
 
-def build_equal_weights() -> torch.Tensor:
-    return torch.full((4, 4), 0.25, dtype=torch.float32)
+def compute_sensitivity_specificity_from_onehot(pred_1h: torch.Tensor, gt_1h: torch.Tensor, eps: float = 1e-6):
+    pred = pred_1h.bool()
+    gt = gt_1h.bool()
+
+    dims = (2, 3, 4)
+
+    tp = (pred & gt).sum(dim=dims).float()
+    fp = (pred & (~gt)).sum(dim=dims).float()
+    tn = ((~pred) & (~gt)).sum(dim=dims).float()
+    fn = ((~pred) & gt).sum(dim=dims).float()
+
+    sensitivity = (tp + eps) / (tp + fn + eps)
+    specificity = (tn + eps) / (tn + fp + eps)
+
+    gt_pos = gt.sum(dim=dims)
+    sensitivity[gt_pos == 0] = torch.nan
+
+    gt_neg = (~gt).sum(dim=dims)
+    specificity[gt_neg == 0] = torch.nan
+
+    return sensitivity, specificity
 
 
-def ensemble_probs_from_logits(
-    logits_list: List[torch.Tensor],
-    weights: torch.Tensor,
-) -> torch.Tensor:
+def compute_multiclass_metrics(pred_labels: torch.Tensor, true_labels: torch.Tensor, num_classes: int, include_bg: bool, hd95_percentile: float = 95.0):
+    pred_1h = labels_to_onehot(pred_labels, num_classes)
+    true_1h = labels_to_onehot(true_labels, num_classes)
+
+    dice = dice_from_onehot(pred_1h, true_1h)
+
+    iou_metric = MeanIoU(include_background=True, reduction="none", ignore_empty=True)
+    iou = sanitize_metric_tensor(iou_metric(pred_1h, true_1h))
+
+    hd95_metric = HausdorffDistanceMetric(include_background=True, percentile=hd95_percentile, reduction="none")
+    hd95 = sanitize_metric_tensor(hd95_metric(pred_1h, true_1h))
+
+    sensitivity, specificity = compute_sensitivity_specificity_from_onehot(pred_1h, true_1h)
+    sensitivity = sanitize_metric_tensor(sensitivity)
+    specificity = sanitize_metric_tensor(specificity)
+
+    if not include_bg:
+        dice = dice[:, 1:]
+        iou = iou[:, 1:]
+        hd95 = hd95[:, 1:]
+        sensitivity = sensitivity[:, 1:]
+        specificity = specificity[:, 1:]
+
+    return {
+        "dice": dice,
+        "iou": iou,
+        "hd95": hd95,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+    }
+
+
+def compute_region_metrics(pred_labels: torch.Tensor, true_labels: torch.Tensor, hd95_percentile: float = 95.0):
+    pred_regions = build_brats_region_masks_from_labels(pred_labels)
+    true_regions = build_brats_region_masks_from_labels(true_labels)
+
+    dice = dice_from_onehot(pred_regions, true_regions)
+
+    iou_metric = MeanIoU(include_background=True, reduction="none", ignore_empty=True)
+    iou = sanitize_metric_tensor(iou_metric(pred_regions, true_regions))
+
+    hd95_metric = HausdorffDistanceMetric(include_background=True, percentile=hd95_percentile, reduction="none")
+    hd95 = sanitize_metric_tensor(hd95_metric(pred_regions, true_regions))
+
+    sensitivity, specificity = compute_sensitivity_specificity_from_onehot(pred_regions, true_regions)
+    sensitivity = sanitize_metric_tensor(sensitivity)
+    specificity = sanitize_metric_tensor(specificity)
+
+    return {
+        "dice": dice,
+        "iou": iou,
+        "hd95": hd95,
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+    }
+
+
+def init_metric_sums(num_channels: int):
+    return {
+        "dice_sum": np.zeros(num_channels, dtype=np.float64),
+        "dice_count": np.zeros(num_channels, dtype=np.float64),
+        "iou_sum": np.zeros(num_channels, dtype=np.float64),
+        "iou_count": np.zeros(num_channels, dtype=np.float64),
+        "hd95_sum": np.zeros(num_channels, dtype=np.float64),
+        "hd95_count": np.zeros(num_channels, dtype=np.float64),
+        "sensitivity_sum": np.zeros(num_channels, dtype=np.float64),
+        "sensitivity_count": np.zeros(num_channels, dtype=np.float64),
+        "specificity_sum": np.zeros(num_channels, dtype=np.float64),
+        "specificity_count": np.zeros(num_channels, dtype=np.float64),
+    }
+
+
+def update_metric_sums(acc: Dict, metric_dict: Dict[str, torch.Tensor]):
+    for metric_name, values in metric_dict.items():
+        values = values.detach().cpu().numpy()
+        valid = ~np.isnan(values)
+        acc[f"{metric_name}_sum"] += np.where(valid, values, 0.0).sum(axis=0)
+        acc[f"{metric_name}_count"] += valid.sum(axis=0)
+
+
+def finalize_metric_sums(acc: Dict):
+    out = {}
+    for metric_name in ["dice", "iou", "hd95", "sensitivity", "specificity"]:
+        out[metric_name] = (
+            acc[f"{metric_name}_sum"] / np.clip(acc[f"{metric_name}_count"], 1.0, None)
+        ).tolist()
+    return out
+
+
+# =========================================================
+# Weight builders
+# =========================================================
+
+def normalize_vector(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    x = np.clip(x, 0.0, None)
+    s = x.sum()
+    if s < eps:
+        return np.full_like(x, 1.0 / len(x))
+    return x / s
+
+
+def build_equal_weights(num_models: int, num_classes: int) -> torch.Tensor:
+    """
+    Returns [M, C]
+    """
+    w = np.full((num_models, num_classes), 1.0 / num_models, dtype=np.float32)
+    return torch.tensor(w, dtype=torch.float32)
+
+
+def build_global_region_dice_weights(model_specs: List[Dict], num_classes: int) -> torch.Tensor:
+    """
+    One scalar weight per model, replicated across classes.
+    Uses mean validation Dice across WT/TC/ET.
+    """
+    scores = []
+
+    for spec in model_specs:
+        with open(spec["val_eval_json"], "r") as f:
+            data = json.load(f)
+
+        region_dice = data["summary_mean"]["regions"]["dice"]  # [WT,TC,ET]
+        score = float(np.nanmean(region_dice))
+        scores.append(score)
+
+    weights_1d = normalize_vector(np.array(scores, dtype=np.float64))
+    weights = np.repeat(weights_1d[:, None], num_classes, axis=1)
+
+    # keep background uniform to avoid weird bias
+    weights[:, 0] = 1.0 / len(model_specs)
+    weights[:, 1:] = weights[:, 1:] / np.clip(weights[:, 1:].sum(axis=0, keepdims=True), 1e-8, None)
+
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+def build_classwise_dice_weights(model_specs: List[Dict], num_classes: int) -> torch.Tensor:
+    """
+    Builds [M, C] using validation per-class Dice.
+    Background is uniform.
+    Foreground classes use per-class validation Dice.
+    """
+    num_models = len(model_specs)
+    weights = np.zeros((num_models, num_classes), dtype=np.float64)
+
+    # background uniform
+    weights[:, 0] = 1.0 / num_models
+
+    # classes 1..3 from per-class dice
+    class_scores = []
+    for spec in model_specs:
+        with open(spec["val_eval_json"], "r") as f:
+            data = json.load(f)
+
+        dice_pc = data["summary_mean"]["classwise"]["dice"]
+
+        # if include_bg_in_metric was false during eval, this should already be [c1,c2,c3]
+        if len(dice_pc) == num_classes - 1:
+            class_scores.append(dice_pc)
+        elif len(dice_pc) == num_classes:
+            class_scores.append(dice_pc[1:])
+        else:
+            raise ValueError(f"Unexpected classwise dice length in {spec['val_eval_json']}: {len(dice_pc)}")
+
+    class_scores = np.asarray(class_scores, dtype=np.float64)  # [M,3]
+
+    for c in range(1, num_classes):
+        weights[:, c] = normalize_vector(class_scores[:, c - 1])
+
+    return torch.tensor(weights, dtype=torch.float32)
+
+
+# =========================================================
+# Fusion
+# =========================================================
+
+def ensemble_probs_from_logits(logits_list: List[torch.Tensor], weights: torch.Tensor) -> torch.Tensor:
+    """
+    logits_list: list of M tensors, each [B,C,H,W,D]
+    weights: [M,C]
+    """
     probs_list = [F.softmax(logits, dim=1) for logits in logits_list]
+    probs = torch.stack(probs_list, dim=0)  # [M,B,C,H,W,D]
 
-    # [M, B, C, H, W, D]
-    probs = torch.stack(probs_list, dim=0)
+    w = weights.to(probs.device).unsqueeze(1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [M,1,C,1,1,1]
+    ensemble_probs = (w * probs).sum(dim=0)  # [B,C,H,W,D]
 
-    # weights [M, C] -> [M, 1, C, 1, 1, 1]
-    w = weights.to(probs.device).unsqueeze(1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-
-    # sum over modalities
-    ensemble_probs = (w * probs).sum(dim=0)
     return ensemble_probs
 
 
-# -------------------------
+# =========================================================
 # Evaluation
-# -------------------------
+# =========================================================
+
 @torch.no_grad()
-def evaluate_ensemble(
-    loader: DataLoader,
-    models: Dict[str, nn.Module],
-    weights: torch.Tensor,
-    device: torch.device,
-    num_classes: int = 4,
-):
-    dice_sum = 0.0
-    dice_count = 0
+def evaluate_single_model(loader: DataLoader, model: nn.Module, cfg: CFG):
+    class_acc = init_metric_sums(cfg.num_classes - 1 if not cfg.include_bg_in_metric else cfg.num_classes)
+    region_acc = init_metric_sums(3)
 
-    per_class_sum = torch.zeros(num_classes - 1, dtype=torch.float64)
-    per_class_count = torch.zeros(num_classes - 1, dtype=torch.float64)
+    for image, seg in loader:
+        image = image.to(cfg.device, non_blocking=True)
+        seg = seg.to(cfg.device, non_blocking=True)
 
-    for t1, t1ce, t2, flair, seg in loader:
-        t1 = t1.to(device)
-        t1ce = t1ce.to(device)
-        t2 = t2.to(device)
-        flair = flair.to(device)
-        seg = seg.to(device)
+        logits = model(image)
+        if isinstance(logits, (list, tuple)):
+            logits = logits[0]
+        elif logits.ndim == 6:
+            logits = logits[:, 0]
 
-        logits_t1 = models["t1"](t1)
-        logits_t1ce = models["t1ce"](t1ce)
-        logits_t2 = models["t2"](t2)
-        logits_flair = models["flair"](flair)
+        pred = torch.argmax(logits, dim=1)
 
-        probs = ensemble_probs_from_logits(
-            [logits_t1, logits_t1ce, logits_t2, logits_flair],
-            weights,
+        class_metrics = compute_multiclass_metrics(
+            pred_labels=pred,
+            true_labels=seg,
+            num_classes=cfg.num_classes,
+            include_bg=cfg.include_bg_in_metric,
+            hd95_percentile=cfg.hd95_percentile,
+        )
+        region_metrics = compute_region_metrics(
+            pred_labels=pred,
+            true_labels=seg,
+            hd95_percentile=cfg.hd95_percentile,
         )
 
-        dice_per_class, mean_dice = dice_from_probs(
-            probs,
-            seg,
-            num_classes=num_classes,
-            include_bg=False,
-        )
+        update_metric_sums(class_acc, class_metrics)
+        update_metric_sums(region_acc, region_metrics)
 
-        dice_sum += torch.nansum(mean_dice).item()
-        dice_count += (~torch.isnan(mean_dice)).sum().item()
+    return {
+        "classwise": finalize_metric_sums(class_acc),
+        "regions": finalize_metric_sums(region_acc),
+    }
 
-        d_compact = dice_per_class[:, 1:].detach().cpu().double()
-        valid = ~torch.isnan(d_compact)
 
-        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
-        per_class_count += valid.sum(dim=0).double()
-
-    mean_val_dice = dice_sum / max(1, dice_count)
-    mean_pc = per_class_sum / torch.clamp(per_class_count, min=1.0)
-
-    return mean_val_dice, mean_pc
 @torch.no_grad()
-def evaluate_single_model(
-    loader: DataLoader,
-    model: nn.Module,
-    modality_index: int,
-    device: torch.device,
-    num_classes: int = 4,
-):
-    dice_sum = 0.0
-    dice_count = 0
+def evaluate_ensemble(loader: DataLoader, models: List[nn.Module], cfg: CFG, weights: torch.Tensor):
+    class_acc = init_metric_sums(cfg.num_classes - 1 if not cfg.include_bg_in_metric else cfg.num_classes)
+    region_acc = init_metric_sums(3)
 
-    per_class_sum = torch.zeros(num_classes - 1, dtype=torch.float64)
-    per_class_count = torch.zeros(num_classes - 1, dtype=torch.float64)
+    for image, seg in loader:
+        image = image.to(cfg.device, non_blocking=True)
+        seg = seg.to(cfg.device, non_blocking=True)
 
-    for t1, t1ce, t2, flair, seg in loader:
-        inputs = [t1, t1ce, t2, flair]
+        logits_list = []
+        for model in models:
+            logits = model(image)
+            if isinstance(logits, (list, tuple)):
+                logits = logits[0]
+            elif logits.ndim == 6:
+                logits = logits[:, 0]
+            logits_list.append(logits)
 
-        img = inputs[modality_index].to(device)
-        seg = seg.to(device)
+        probs = ensemble_probs_from_logits(logits_list, weights)
+        pred = torch.argmax(probs, dim=1)
 
-        logits = model(img)
-        probs = F.softmax(logits, dim=1)
-
-        dice_per_class, mean_dice = dice_from_probs(
-            probs,
-            seg,
-            num_classes=num_classes,
-            include_bg=False,
+        class_metrics = compute_multiclass_metrics(
+            pred_labels=pred,
+            true_labels=seg,
+            num_classes=cfg.num_classes,
+            include_bg=cfg.include_bg_in_metric,
+            hd95_percentile=cfg.hd95_percentile,
+        )
+        region_metrics = compute_region_metrics(
+            pred_labels=pred,
+            true_labels=seg,
+            hd95_percentile=cfg.hd95_percentile,
         )
 
-        dice_sum += torch.nansum(mean_dice).item()
-        dice_count += (~torch.isnan(mean_dice)).sum().item()
+        update_metric_sums(class_acc, class_metrics)
+        update_metric_sums(region_acc, region_metrics)
 
-        d_compact = dice_per_class[:, 1:].detach().cpu().double()
-        valid = ~torch.isnan(d_compact)
+    return {
+        "classwise": finalize_metric_sums(class_acc),
+        "regions": finalize_metric_sums(region_acc),
+    }
 
-        per_class_sum += torch.where(valid, d_compact, torch.zeros_like(d_compact)).sum(dim=0)
-        per_class_count += valid.sum(dim=0).double()
 
-    mean_val_dice = dice_sum / max(1, dice_count)
-    mean_pc = per_class_sum / torch.clamp(per_class_count, min=1.0)
-
-    return mean_val_dice, mean_pc
-
-def print_result(name: str, mean_dice: float, mean_pc: torch.Tensor):
+def print_result(name: str, result: Dict):
     print(f"\n=== {name} ===")
-    print(f"Mean test Dice: {mean_dice:.4f}")
-    print(f"Per-class Dice: {mean_pc.tolist()}")
 
-# -------------------------
+    print("BraTS regions:")
+    print(f"  Dice WT/TC/ET: {result['regions']['dice']}")
+    print(f"  IoU  WT/TC/ET: {result['regions']['iou']}")
+    print(f"  HD95 WT/TC/ET: {result['regions']['hd95']}")
+
+    print("Class-wise debug:")
+    print(f"  Dice: {result['classwise']['dice']}")
+    print(f"  IoU : {result['classwise']['iou']}")
+    print(f"  HD95: {result['classwise']['hd95']}")
+
+
+# =========================================================
 # Main
-# -------------------------
-def main():
-    cfg = CFG("config.yaml")
-    seed_everything(cfg.seed)
+# =========================================================
 
-    device = cfg.device
+def main():
+    base_cfg = CFG(MODEL_SPECS[0]["config"])
+    seed_everything(base_cfg.seed)
+
+    device = base_cfg.device
     print("Device:", device)
 
     patient_names = sorted([
-        os.path.join(cfg.root, d) for d in os.listdir(cfg.root)
-        if os.path.isdir(os.path.join(cfg.root, d))
+        os.path.join(base_cfg.root, d)
+        for d in os.listdir(base_cfg.root)
+        if os.path.isdir(os.path.join(base_cfg.root, d))
     ])
 
-    _, _, test_patients = make_patient_splits(patient_names, seed=cfg.seed)
+    _, _, test_patients = make_patient_splits(patient_names, seed=base_cfg.seed)
 
-    test_ds = BraTSEnsembleDataset(
-        test_patients,
-        include_random_crops=False,   # start with center crop only
+    test_ds = BraTSMultiModalDataset(
+        patient_folders=test_patients,
+        root=base_cfg.root,
+        transformation=None,
     )
 
     test_loader = DataLoader(
         test_ds,
         batch_size=1,
         shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=(cfg.device.type == "cuda"),
+        num_workers=base_cfg.num_workers,
+        pin_memory=(device.type == "cuda"),
         drop_last=False,
-        persistent_workers=(cfg.num_workers > 0),
+        persistent_workers=(base_cfg.num_workers > 0),
     )
 
-    models = {
-        "t1": load_model("checkpoints/best_model_t1.pth", device),
-        "t1ce": load_model("checkpoints/best_model_t1ce.pth", device),
-        "t2": load_model("checkpoints/best_model_t2.pth", device),
-        "flair": load_model("checkpoints/best_model_flair.pth", device),
-    }
-    
-    results = {}
+    models = []
+    model_cfgs = []
 
-    # -------------------------
-    # Single-modality
-    # -------------------------
-    t1_dice, t1_pc = evaluate_single_model(test_loader, models["t1"], 0, device, cfg.num_classes)
-    t1ce_dice, t1ce_pc = evaluate_single_model(test_loader, models["t1ce"], 1, device, cfg.num_classes)
-    t2_dice, t2_pc = evaluate_single_model(test_loader, models["t2"], 2, device, cfg.num_classes)
-    flair_dice, flair_pc = evaluate_single_model(test_loader, models["flair"], 3, device, cfg.num_classes)
+    for spec in MODEL_SPECS:
+        model, cfg = load_model_from_spec(spec, device)
+        models.append(model)
+        model_cfgs.append(cfg)
 
-    print_result("T1", t1_dice, t1_pc)
-    print_result("T1ce", t1ce_dice, t1ce_pc)
-    print_result("T2", t2_dice, t2_pc)
-    print_result("FLAIR", flair_dice, flair_pc)
-
-    results["t1"] = {
-        "mean_dice": float(t1_dice),
-        "per_class": t1_pc.tolist(),
-    }
-    results["t1ce"] = {
-        "mean_dice": float(t1ce_dice),
-        "per_class": t1ce_pc.tolist(),
-    }
-    results["t2"] = {
-        "mean_dice": float(t2_dice),
-        "per_class": t2_pc.tolist(),
-    }
-    results["flair"] = {
-        "mean_dice": float(flair_dice),
-        "per_class": flair_pc.tolist(),
+    results = {
+        "single_models": {},
+        "ensembles": {},
     }
 
     # -------------------------
-    # Equal ensemble
+    # Single models
     # -------------------------
-    W_equal = build_equal_weights()
-    eq_dice, eq_pc = evaluate_ensemble(test_loader, models, W_equal, device, cfg.num_classes)
+    for spec, model, cfg in zip(MODEL_SPECS, models, model_cfgs):
+        res = evaluate_single_model(test_loader, model, cfg)
+        print_result(spec["name"], res)
+        results["single_models"][spec["name"]] = res
 
-    print_result("Equal-weight ensemble", eq_dice, eq_pc)
-
-    results["ensemble_equal"] = {
-        "mean_dice": float(eq_dice),
-        "per_class": eq_pc.tolist(),
+    # -------------------------
+    # Ensemble 1: Equal
+    # -------------------------
+    W_equal = build_equal_weights(
+        num_models=len(MODEL_SPECS),
+        num_classes=base_cfg.num_classes,
+    )
+    res_equal = evaluate_ensemble(test_loader, models, base_cfg, W_equal)
+    print_result("Ensemble - Equal weights", res_equal)
+    results["ensembles"]["equal"] = {
+        "weights": W_equal.tolist(),
+        "metrics": res_equal,
     }
 
     # -------------------------
-    # Class-wise weighted ensemble
+    # Ensemble 2: Global region-based model weights
     # -------------------------
-    W_classwise = build_classwise_weights()
-    cw_dice, cw_pc = evaluate_ensemble(test_loader, models, W_classwise, device, cfg.num_classes)
-
-    print_result("Class-wise weighted ensemble", cw_dice, cw_pc)
-
-    results["ensemble_weighted"] = {
-        "mean_dice": float(cw_dice),
-        "per_class": cw_pc.tolist(),
+    W_global = build_global_region_dice_weights(
+        model_specs=MODEL_SPECS,
+        num_classes=base_cfg.num_classes,
+    )
+    res_global = evaluate_ensemble(test_loader, models, base_cfg, W_global)
+    print_result("Ensemble - Global weights from val WT/TC/ET Dice", res_global)
+    results["ensembles"]["global_region_weighted"] = {
+        "weights": W_global.tolist(),
+        "metrics": res_global,
     }
 
     # -------------------------
-    # Save JSON
+    # Ensemble 3: Class-wise weights
     # -------------------------
-    out_path = "ensemble_results.json"
+    W_classwise = build_classwise_dice_weights(
+        model_specs=MODEL_SPECS,
+        num_classes=base_cfg.num_classes,
+    )
+    res_classwise = evaluate_ensemble(test_loader, models, base_cfg, W_classwise)
+    print_result("Ensemble - Class-wise weights from val class Dice", res_classwise)
+    results["ensembles"]["classwise_weighted"] = {
+        "weights": W_classwise.tolist(),
+        "metrics": res_classwise,
+    }
+
+    os.makedirs("results", exist_ok=True)
+    out_path = "results/ensemble_comparison.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\nResults saved to {out_path}")
+    print(f"\nSaved ensemble results to {out_path}")
+
 
 if __name__ == "__main__":
     main()
