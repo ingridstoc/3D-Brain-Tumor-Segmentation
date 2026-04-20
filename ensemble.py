@@ -24,34 +24,34 @@ from train import build_model
 
 MODEL_SPECS = [
     {
-        "name": "unet",
+        "name": "unet_4ch_full",
         "config": "configs/unet.yaml",
-        "checkpoint": "checkpoints/best_model_unet_4ch.pth",
-        "val_eval_json": "eval_outputs/unet_4ch/val/case_metrics.json",
+        "checkpoint": "checkpoints/best_model_unet_4ch_full.pth",
+        "val_eval_json": "eval_outputs/unet_4ch_full/val/case_metrics.json",
     },
     {
-        "name": "segresnet",
+        "name": "segresnet_4ch_full",
         "config": "configs/segresnet.yaml",
-        "checkpoint": "checkpoints/best_model_segresnet_4ch.pth",
-        "val_eval_json": "eval_outputs/segresnet_4ch/val/case_metrics.json",
+        "checkpoint": "checkpoints/best_model_segresnet_4ch_full.pth",
+        "val_eval_json": "eval_outputs/segresnet_4ch_full/val/case_metrics.json",
     },
     {
-        "name": "dynunet",
+        "name": "dynunet_4ch_full",
         "config": "configs/dynunet.yaml",
-        "checkpoint": "checkpoints/best_model_dynunet_4ch.pth",
-        "val_eval_json": "eval_outputs/dynunet_4ch/val/case_metrics.json",
+        "checkpoint": "checkpoints/best_model_dynunet_4ch_full.pth",
+        "val_eval_json": "eval_outputs/dynunet_4ch_full/val/case_metrics.json",
     },
     {
-        "name": "unetr",
+        "name": "unetr_4ch_full",
         "config": "configs/unetr.yaml",
-        "checkpoint": "checkpoints/best_model_unetr_4ch.pth",
-        "val_eval_json": "eval_outputs/unetr_4ch/val/case_metrics.json",
+        "checkpoint": "checkpoints/best_model_unetr_4ch_full.pth",
+        "val_eval_json": "eval_outputs/unetr_4ch_full/val/case_metrics.json",
     },
     {
-        "name": "swinunetr",
-        "config": "configs/swinunetr.yaml",
-        "checkpoint": "checkpoints/best_model_swinunetr_4ch.pth",
-        "val_eval_json": "eval_outputs/swinunetr_4ch/val/case_metrics.json",
+        "name": "vnet_4ch_full",
+        "config": "configs/vnet.yaml",
+        "checkpoint": "checkpoints/best_model_vnet_4ch_full.pth",
+        "val_eval_json": "eval_outputs/vnet_4ch_full/val/case_metrics.json",
     },
 ]
 

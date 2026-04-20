@@ -1,16 +1,17 @@
 root: "brats_full_fixed"
-modality: "multimodal_4ch"
 num_classes: 4
 batch_size: 1 # era 2 cand foloseam cropuri
-num_workers: 8
+num_workers: 8 # la restul il refac 8 doar swin e 2
 epochs: 35
 seed: 42
 include_bg_in_metric: false
 device: "auto"
-run_name: "multimodal_4ch_full"
+run_name: "vnet_4ch_full"
+modality: "multimodal_4ch"
+dataset_type: "full"
 
 model:
-  name: "swinunetr"   # unet | segresnet | unetr | dynunet | swinunetr
+  name: "vnet"   # unet | segresnet | unetr | dynunet | vnet
 
   unet:
     in_channels: 4
@@ -49,15 +50,12 @@ model:
     deep_supr_num: 1
     res_block: true
 
-  swinunetr:
+  vnet:
     in_channels: 4
-    img_size: [192, 192, 160]
-    feature_size: 24
-    use_checkpoint: false
-    drop_rate: 0.0
-    attn_drop_rate: 0.0
-    dropout_path_rate: 0.0
-    normalize: true
+    spatial_dims: 3
+    act: ["elu", {"inplace": true}]
+    bias: false
+
 
 metrics:
   compute_hd95: true
@@ -67,7 +65,7 @@ metrics:
   compute_specificity: true
   eval_on_train: false   # keep false; train metrics stay Dice-only
 
-val_subset_size: 50
+val_subset_size: 70
 augmentations:
   name: "weak"
 

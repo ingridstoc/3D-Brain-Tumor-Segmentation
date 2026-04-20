@@ -212,7 +212,7 @@ def make_patient_splits(
     return train_patients, val_patients, test_patients
 
 
-def build_loaders(cfg: CFG, patient_names: List[str]):
+def build_loaders(cfg: CFG, patient_names: List[str], use_full_val: bool = False):
     train_patients, val_patients, test_patients = make_patient_splits(
         patient_names,
         seed=cfg.seed
@@ -266,8 +266,18 @@ def build_loaders(cfg: CFG, patient_names: List[str]):
         persistent_workers=(cfg.num_workers > 0),
     )
 
-    val_loader = DataLoader(
+    val_loader_subset = DataLoader(
         val_ds_small,
+        batch_size=1,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=(cfg.device.type == "cuda"),
+        drop_last=False,
+        persistent_workers=(cfg.num_workers > 0),
+    )
+
+    val_loader_full = DataLoader(
+        val_ds,
         batch_size=1,
         shuffle=False,
         num_workers=cfg.num_workers,
@@ -286,8 +296,12 @@ def build_loaders(cfg: CFG, patient_names: List[str]):
         persistent_workers=(cfg.num_workers > 0),
     )
 
-    print(f"train batches = {len(train_loader)}")
-    print(f"val batches   = {len(val_loader)}  (subset)")
-    print(f"test batches  = {len(test_loader)}")
+    print(f"train batches      = {len(train_loader)}")
+    print(f"val subset batches = {len(val_loader_subset)}")
+    print(f"val full batches   = {len(val_loader_full)}")
+    print(f"test batches       = {len(test_loader)}")
 
-    return train_loader, val_loader, test_loader
+    if use_full_val:
+        return train_loader, val_loader_full, test_loader
+
+    return train_loader, val_loader_subset, test_loader

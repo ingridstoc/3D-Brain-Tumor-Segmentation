@@ -73,8 +73,6 @@ class CFG:
         self.model_params = model_cfg.get(self.model_name, {})
         self.root = data["root"]
         self.val_subset_size = data.get("val_subset_size", 50)
-        self.modality = data.get("modality", "t1").lower()
-        self.run_name = data.get("run_name", self.modality)
         self.num_classes = data.get("num_classes", 4)
         self.batch_size = data.get("batch_size", 1)
         self.num_workers = data.get("num_workers", 1)
@@ -88,6 +86,9 @@ class CFG:
         self.compute_sensitivity = metrics_cfg.get("compute_sensitivity", True)
         self.compute_specificity = metrics_cfg.get("compute_specificity", True)
         self.eval_on_train = metrics_cfg.get("eval_on_train", False)
+        self.modality = data.get("modality", "t1").lower()
+        dataset_type = data.get("dataset_type", "full").lower()
+        self.run_name = data.get("run_name", f"{self.model_name}_{self.modality}_{dataset_type}")
 
         device_value = data.get("device", "auto")
         if device_value == "auto":

@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from monai.metrics import HausdorffDistanceMetric, MeanIoU
-from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet, SwinUNETR
+from monai.networks.nets import UNet, SegResNet, UNETR, DynUNet, VNet
 
 from dataset import BraTSMultiModalDataset, make_patient_splits
 from utils import CFG, seed_everything
@@ -84,18 +84,14 @@ def build_dynunet_3d(cfg: CFG) -> nn.Module:
     )
 
 
-def build_swinunetr_3d(cfg: CFG) -> nn.Module:
+def build_vnet_3d(cfg: CFG) -> nn.Module:
     p = cfg.model_params
-    return SwinUNETR(
-        img_size=tuple(p.get("img_size", [192, 192, 160])),
+    return VNet(
+        spatial_dims=p.get("spatial_dims", 3),
         in_channels=p.get("in_channels", 4),
         out_channels=cfg.num_classes,
-        feature_size=p.get("feature_size", 24),
-        use_checkpoint=p.get("use_checkpoint", False),
-        drop_rate=p.get("drop_rate", 0.0),
-        attn_drop_rate=p.get("attn_drop_rate", 0.0),
-        dropout_path_rate=p.get("dropout_path_rate", 0.0),
-        normalize=p.get("normalize", True),
+        act=tuple(p.get("act", ["elu", {"inplace": True}])),
+        bias=p.get("bias", False),
     )
 
 
@@ -109,11 +105,9 @@ def build_model(cfg: CFG) -> nn.Module:
         return build_unetr_3d(cfg)
     if name == "dynunet":
         return build_dynunet_3d(cfg)
-    if name == "swinunetr":
-        return build_swinunetr_3d(cfg)
+    if name == "vnet":
+        return build_vnet_3d(cfg)
     raise ValueError(f"Unknown model name: {cfg.model_name}")
-
-
 # =========================================================
 # Helpers
 # =========================================================
@@ -584,7 +578,16 @@ def main(cfg: CFG, checkpoint_path: str, split: str = "test"):
 
 
 if __name__ == "__main__":
-    cfg = CFG("config.yaml")
+    import sys
 
+    cfg = CFG("config.yaml")
     checkpoint_path = os.path.join("checkpoints", f"best_model_{cfg.run_name}.pth")
-    main(cfg=cfg, checkpoint_path=checkpoint_path, split="test")
+
+    split = "test"
+    if len(sys.argv) >= 2:
+        split = sys.argv[1].lower()
+
+    if split not in {"train", "val", "test"}:
+        raise ValueError("Usage: python3 evaluate_brats_regions.py [train|val|test]")
+
+    main(cfg=cfg, checkpoint_path=checkpoint_path, split=split)
