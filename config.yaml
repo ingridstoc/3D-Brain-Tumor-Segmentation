@@ -6,12 +6,12 @@ epochs: 35
 seed: 42
 include_bg_in_metric: false
 device: "auto"
-run_name: "vnet_4ch_full"
+run_name: "unet_4ch_full"
 modality: "multimodal_4ch"
 dataset_type: "full"
 
 model:
-  name: "vnet"   # unet | segresnet | unetr | dynunet | vnet
+  name: "unet"   # unet | segresnet | unetr | dynunet | vnet
 
   unet:
     in_channels: 4
