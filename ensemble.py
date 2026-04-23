@@ -25,31 +25,36 @@ from train import build_model
 MODEL_SPECS = [
     {
         "name": "unet_4ch_full",
-        "config": "configs/unet.yaml",
+        "model_name": "unet",
+        "run_name": "unet_4ch_full",
         "checkpoint": "checkpoints/best_model_unet_4ch_full.pth",
         "val_eval_json": "eval_outputs/unet_4ch_full/val/case_metrics.json",
     },
     {
         "name": "segresnet_4ch_full",
-        "config": "configs/segresnet.yaml",
+        "model_name": "segresnet",
+        "run_name": "segresnet_4ch_full",
         "checkpoint": "checkpoints/best_model_segresnet_4ch_full.pth",
         "val_eval_json": "eval_outputs/segresnet_4ch_full/val/case_metrics.json",
     },
     {
         "name": "dynunet_4ch_full",
-        "config": "configs/dynunet.yaml",
+        "model_name": "dynunet",
+        "run_name": "dynunet_4ch_full",
         "checkpoint": "checkpoints/best_model_dynunet_4ch_full.pth",
         "val_eval_json": "eval_outputs/dynunet_4ch_full/val/case_metrics.json",
     },
     {
         "name": "unetr_4ch_full",
-        "config": "configs/unetr.yaml",
+        "model_name": "unetr",
+        "run_name": "unetr_4ch_full",
         "checkpoint": "checkpoints/best_model_unetr_4ch_full.pth",
         "val_eval_json": "eval_outputs/unetr_4ch_full/val/case_metrics.json",
     },
     {
         "name": "vnet_4ch_full",
-        "config": "configs/vnet.yaml",
+        "model_name": "vnet",
+        "run_name": "vnet_4ch_full",
         "checkpoint": "checkpoints/best_model_vnet_4ch_full.pth",
         "val_eval_json": "eval_outputs/vnet_4ch_full/val/case_metrics.json",
     },
@@ -61,7 +66,17 @@ MODEL_SPECS = [
 # =========================================================
 
 def load_model_from_spec(spec: Dict, device: torch.device):
-    cfg = CFG(spec["config"])
+    base_cfg = CFG("config.yaml")
+
+    cfg_dict = dict(base_cfg.raw)
+    cfg_dict["run_name"] = spec["run_name"]
+
+    model_section = dict(cfg_dict.get("model", {}))
+    model_section["name"] = spec["model_name"]
+    cfg_dict["model"] = model_section
+
+    cfg = CFG(cfg_dict)
+
     model = build_model(cfg).to(device)
 
     ckpt = torch.load(spec["checkpoint"], map_location=device)
@@ -428,7 +443,7 @@ def print_result(name: str, result: Dict):
 # =========================================================
 
 def main():
-    base_cfg = CFG(MODEL_SPECS[0]["config"])
+    base_cfg = CFG("config.yaml")
     seed_everything(base_cfg.seed)
 
     device = base_cfg.device
