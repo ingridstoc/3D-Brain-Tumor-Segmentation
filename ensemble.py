@@ -386,21 +386,38 @@ def evaluate_ensemble(loader: DataLoader, models: List[nn.Module], cfg: CFG, wei
     class_acc = init_metric_sums(cfg.num_classes - 1 if not cfg.include_bg_in_metric else cfg.num_classes)
     region_acc = init_metric_sums(3)
 
-    for image, seg in loader:
-        image = image.to(cfg.device, non_blocking=True)
-        seg = seg.to(cfg.device, non_blocking=True)
+    device = cfg.device
 
-        logits_list = []
+    for image, seg in loader:
+        image = image.to(device, non_blocking=True)
+        seg = seg.to(device, non_blocking=True)
+
+        probs_list = []
+
         for model in models:
+            model.to(device)
+            model.eval()
+
             logits = model(image)
+
             if isinstance(logits, (list, tuple)):
                 logits = logits[0]
             elif logits.ndim == 6:
                 logits = logits[:, 0]
-            logits_list.append(logits)
 
-        probs = ensemble_probs_from_logits(logits_list, weights)
-        pred = torch.argmax(probs, dim=1)
+            probs = F.softmax(logits, dim=1).detach().cpu()
+            probs_list.append(probs)
+
+            model.to("cpu")
+            del logits, probs
+            torch.cuda.empty_cache()
+
+        probs_stack = torch.stack(probs_list, dim=0)  # [M,B,C,H,W,D]
+
+        w = weights.cpu().unsqueeze(1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        ensemble_probs = (w * probs_stack).sum(dim=0).to(device)
+
+        pred = torch.argmax(ensemble_probs, dim=1)
 
         class_metrics = compute_multiclass_metrics(
             pred_labels=pred,
@@ -409,6 +426,7 @@ def evaluate_ensemble(loader: DataLoader, models: List[nn.Module], cfg: CFG, wei
             include_bg=cfg.include_bg_in_metric,
             hd95_percentile=cfg.hd95_percentile,
         )
+
         region_metrics = compute_region_metrics(
             pred_labels=pred,
             true_labels=seg,
@@ -418,12 +436,13 @@ def evaluate_ensemble(loader: DataLoader, models: List[nn.Module], cfg: CFG, wei
         update_metric_sums(class_acc, class_metrics)
         update_metric_sums(region_acc, region_metrics)
 
+        del image, seg, probs_list, probs_stack, ensemble_probs, pred
+        torch.cuda.empty_cache()
+
     return {
         "classwise": finalize_metric_sums(class_acc),
         "regions": finalize_metric_sums(region_acc),
     }
-
-
 def print_result(name: str, result: Dict):
     print(f"\n=== {name} ===")
 
@@ -477,7 +496,7 @@ def main():
     model_cfgs = []
 
     for spec in MODEL_SPECS:
-        model, cfg = load_model_from_spec(spec, device)
+        model, cfg = load_model_from_spec(spec, torch.device("cpu"))
         models.append(model)
         model_cfgs.append(cfg)
 
@@ -485,14 +504,7 @@ def main():
         "single_models": {},
         "ensembles": {},
     }
-
-    # -------------------------
-    # Single models
-    # -------------------------
-    for spec, model, cfg in zip(MODEL_SPECS, models, model_cfgs):
-        res = evaluate_single_model(test_loader, model, cfg)
-        print_result(spec["name"], res)
-        results["single_models"][spec["name"]] = res
+    results["single_models"] = "Skipped. Already evaluated separately."
 
     # -------------------------
     # Ensemble 1: Equal
